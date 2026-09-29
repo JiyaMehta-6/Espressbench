@@ -1,3 +1,4 @@
+import inspect
 import time
 
 from espbench.fuzz import run as fuzz_run
@@ -18,6 +19,8 @@ def suite_failed(name, payload):
         return False
     if payload.get("failed") or payload.get("leak_detected"):
         return True
+    if payload.get("device_restarted"):
+        return True
     if payload.get("passed") is False:
         return True
     if payload.get("all_recovered") is False:
@@ -29,7 +32,21 @@ def suite_failed(name, payload):
     return False
 
 
-def run_suites(device, suites=("latency", "memory", "fuzz"), params=None):
+def _validate_params(suites, params):
+    for name in suites:
+        raw = params.get(name, {})
+        if not isinstance(raw, dict):
+            raise ValueError(f"params for suite {name!r} must be an object")
+        allowed = inspect.signature(SUITES[name]).parameters
+        extra = [key for key in raw if key not in allowed]
+        if extra:
+            raise ValueError(
+                f"unknown parameter {extra[0]!r} for suite {name!r}; "
+                f"expected one of {sorted(allowed)}")
+
+
+def run_suites(device, suites=("latency", "memory", "fuzz"), params=None,
+                progress=None):
     params = params or {}
     suites = list(suites)
     unknown = [name for name in suites if name not in SUITES]
@@ -37,6 +54,7 @@ def run_suites(device, suites=("latency", "memory", "fuzz"), params=None):
         raise ValueError(f"unknown suite {unknown[0]!r}; expected one of {sorted(SUITES)}")
     if not suites:
         raise ValueError("at least one suite is required")
+    _validate_params(suites, params)
     results = {"suites": {}}
     stats_error = None
     try:
@@ -56,7 +74,9 @@ def run_suites(device, suites=("latency", "memory", "fuzz"), params=None):
             device.ping()
         except Exception:
             return results
-    for name in suites:
+    for index, name in enumerate(suites, 1):
+        if progress:
+            progress(f"suite {name} ({index}/{len(suites)})")
         results["suites"][name] = SUITES[name](device, **params.get(name, {}))
     _attach_log(results, device)
     return results
@@ -82,7 +102,8 @@ def _soak_event(events, iteration, kind, detail):
     return 1
 
 
-def run_soak(device, hours=0.0, interval=60.0, suites=None, params=None):
+def run_soak(device, hours=0.0, interval=60.0, suites=None, params=None,
+             progress=None):
     if hours < 0:
         raise ValueError("hours must be non-negative")
     if interval < 0:
@@ -94,6 +115,8 @@ def run_soak(device, hours=0.0, interval=60.0, suites=None, params=None):
         if unknown:
             raise ValueError(
                 f"unknown suite {unknown[0]!r}; expected one of {sorted(SUITES)}")
+    if interval == 0 and hours > 0.01:
+        interval = 1.0
     started = time.time()
     deadline = started + hours * 3600.0
     iterations = 0
@@ -140,7 +163,7 @@ def run_soak(device, hours=0.0, interval=60.0, suites=None, params=None):
                 dropped += _soak_event(events, iterations, "ping_error", exc)
         boot = stats.get("boot_count")
         if isinstance(boot, int):
-            if boot_count is not None and boot > boot_count:
+            if boot_count is not None and boot != boot_count:
                 reboots += 1
                 iteration_failed = True
                 dropped += _soak_event(events, iterations, "reboot",
@@ -148,6 +171,9 @@ def run_soak(device, hours=0.0, interval=60.0, suites=None, params=None):
             boot_count = boot
         if iteration_failed:
             failures += 1
+        if progress:
+            progress(f"iteration {iterations} "
+                     + ("FAILED" if iteration_failed else "ok"))
         if time.time() >= deadline:
             break
         time.sleep(min(interval, max(0.0, deadline - time.time())))

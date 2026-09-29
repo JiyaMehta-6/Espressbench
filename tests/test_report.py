@@ -36,3 +36,21 @@ def test_junit_failure_message_survives_quotes_and_parses():
     payload = json.loads(root.find("testcase/failure").get("message"))
     assert payload["error"] == 'bad "state"'
     assert payload["leak_detected"] is True
+
+
+def test_write_reports_produces_strict_json_for_non_finite(tmp_path):
+    from espbench.report import write_reports
+
+    write_reports({"suites": {"latency": {"p95": float("nan"), "n": 5}}}, tmp_path)
+    data = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert data["suites"]["latency"]["p95"] is None
+    assert data["suites"]["latency"]["n"] == 5
+
+
+def test_write_reports_maps_infinity_to_null(tmp_path):
+    from espbench.report import write_reports
+
+    write_reports({"suites": {"latency": {"p95": float("inf"), "n": 5}}}, tmp_path)
+    data = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    assert data["suites"]["latency"]["p95"] is None
+    assert data["suites"]["latency"]["n"] == 5

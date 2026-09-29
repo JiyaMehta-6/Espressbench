@@ -25,6 +25,7 @@ def run(device, samples=25, interval=1.0, drop_threshold=2048):
                 raise ValueError("mem_free unavailable")
         except Exception:
             errors += 1
+            time.sleep(interval)
             continue
         series.append((uptime, free))
         time.sleep(interval)

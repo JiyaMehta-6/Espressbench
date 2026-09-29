@@ -11,7 +11,15 @@ from PySide6.QtCore import QThread  # noqa: E402
 from PySide6.QtGui import QCloseEvent  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from espbench.gui import MainWindow, PowerTab, RunWorker, SuitesTab  # noqa: E402
+from espbench.gui import (  # noqa: E402
+    ChaosTab,
+    MainWindow,
+    PowerTab,
+    RunWorker,
+    SoakTab,
+    SuitesTab,
+    _save_device_settings,
+)
 
 
 @pytest.fixture(scope="session")
@@ -170,3 +178,142 @@ def test_close_event_quits_running_thread(app):
     assert thread.wait(2000)
     window.suites_tab._thread = None
     window.close()
+
+
+def test_probe_sim_reports_ready(suites_tab):
+    suites_tab.sim.setChecked(True)
+    suites_tab.on_probe()
+    assert "simulator ready" in suites_tab.status.text()
+
+
+def test_probe_dead_host_reports_unreachable(suites_tab):
+    suites_tab.host.setText("127.0.0.1")
+    suites_tab.port.setValue(9)
+    suites_tab.sim.setChecked(False)
+    suites_tab.on_probe()
+    assert "unreachable" in suites_tab.status.text()
+    assert suites_tab.probe_btn.isEnabled()
+
+
+def test_suites_run_shows_progress_and_chart(app, suites_tab):
+    suites_tab.sim.setChecked(True)
+    suites_tab.suite_boxes["memory"].setChecked(False)
+    suites_tab.suite_boxes["fuzz"].setChecked(False)
+    suites_tab.latency_n.setValue(5)
+    suites_tab.on_run()
+    assert not suites_tab.probe_btn.isEnabled()
+    deadline = time.time() + 30
+    while not suites_tab.run_btn.isEnabled() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    assert suites_tab.progress.value() == 100
+    assert "completed" in suites_tab.status.text()
+    text = suites_tab.output.toPlainText()
+    assert "ESP32 Eval Bench Report" in text
+    assert "Suites" in text
+    if suites_tab.chart is not None:
+        assert not suites_tab.chart.isHidden()
+
+
+def test_soak_tab_quick_run(app):
+    tab = SoakTab()
+    tab.sim.setChecked(True)
+    tab.hours.setValue(0.0)
+    tab.interval.setValue(0.0)
+    tab.on_run()
+    deadline = time.time() + 30
+    while not tab.run_btn.isEnabled() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    text = tab.output.toPlainText()
+    assert "ESP32 Eval Bench Soak" in text
+    assert "Soak summary" in text
+    assert tab.export_btn.isEnabled()
+    assert "passed" in tab.status.text()
+    assert "1 iterations" in tab.status.text()
+
+
+def test_soak_tab_rejects_missing_device(app, monkeypatch):
+    tab = SoakTab()
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *args, **kwargs: messages.append(args[2]))
+    tab.sim.setChecked(False)
+    tab.host.setText("")
+    tab.on_run()
+    assert messages and "device host" in messages[0]
+    assert tab.run_btn.isEnabled()
+
+
+def test_chaos_tab_quick_run(app):
+    tab = ChaosTab()
+    tab.sim.setChecked(True)
+    for mode in ("delay", "corrupt", "cut"):
+        tab.fault_boxes[mode].setChecked(False)
+    tab.duration.setValue(0.05)
+    tab.recovery.setValue(1.0)
+    tab.on_run()
+    deadline = time.time() + 30
+    while not tab.run_btn.isEnabled() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    text = tab.output.toPlainText()
+    assert "Chaos summary" in text
+    assert tab.export_btn.isEnabled()
+    assert "recovered" in tab.status.text()
+
+
+def test_mainwindow_has_all_tabs_and_menu(app):
+    window = MainWindow()
+    assert isinstance(window.soak_tab, SoakTab)
+    assert isinstance(window.chaos_tab, ChaosTab)
+    assert isinstance(window.power_tab, PowerTab)
+    actions = [a.text() for a in window.menuBar().actions()]
+    assert "&File" in actions
+    assert "&Help" in actions
+    window.close()
+
+
+def test_close_event_blocked_while_soak_running(app, monkeypatch):
+    window = MainWindow()
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *args, **kwargs: messages.append(args[2]))
+
+    class StuckThread:
+        @staticmethod
+        def isRunning():
+            return True
+
+        @staticmethod
+        def quit():
+            pass
+
+        @staticmethod
+        def wait(timeout):
+            return False
+
+    window.soak_tab._thread = StuckThread()
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert event.isAccepted() is False
+    assert messages and "still active" in messages[0]
+    window.soak_tab._thread = None
+    window.close()
+
+
+def test_device_settings_roundtrip(app, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+
+    path = tmp_path / "settings.ini"
+    monkeypatch.setattr("espbench.gui._settings",
+                        lambda: QSettings(str(path), QSettings.IniFormat))
+    tab = SuitesTab()
+    tab.host.setText("10.0.0.7")
+    tab.port.setValue(8080)
+    tab.sim.setChecked(True)
+    _save_device_settings(tab.host, tab.port, tab.sim, "suites")
+    fresh = SuitesTab()
+    assert fresh.host.text() == "10.0.0.7"
+    assert fresh.port.value() == 8080
+    assert fresh.sim.isChecked()

@@ -515,3 +515,46 @@ def test_cli_baseline_auto_errors(tmp_path, capsys):
     neutral = _write(tmp_path, "neutral.json", {"a": {"n": 3}})
     assert main(["baseline", str(neutral), "--auto"]) == 2
     assert "no budgetable metrics" in capsys.readouterr().err
+
+
+def test_soak_duration_metrics_compare_neutral():
+    before = {"soak": {"iterations": 10, "elapsed_s": 60.0,
+                       "hours_planned": 1.0, "passed": True}}
+    after = {"soak": {"iterations": 11, "elapsed_s": 61.8,
+                      "hours_planned": 1.0, "passed": True}}
+    rows, summary = compare_reports(before, after)
+    assert summary["regressions"] == 0
+    verdicts = {row["metric"]: row["verdict"] for row in rows}
+    assert verdicts["soak.iterations"] == "neutral"
+    assert verdicts["soak.elapsed_s"] == "neutral"
+
+
+def test_budget_rejects_non_finite_limits():
+    with pytest.raises(ValueError, match="finite"):
+        parse_budget("p95=inf")
+    with pytest.raises(ValueError, match="finite"):
+        parse_budget("p95=nan")
+    with pytest.raises(ValueError, match="finite"):
+        parse_budget("p95>=1e999")
+
+
+def test_flatten_duplicate_names_fall_back_to_indexes():
+    report = {"chaos": {"total": 2, "results": [
+        {"fault": "refuse", "recovered": True},
+        {"fault": "refuse", "recovered": False}]}}
+    flat = flatten(report)
+    assert flat["chaos.results.1.recovered"] is True
+    assert flat["chaos.results.2.recovered"] is False
+    assert flat["chaos.total"] == 2
+
+
+def test_aggregate_ignores_suiteless_runs():
+    dead = {"device": {"error": "down"}, "suites": {}}
+    good = {"device": {"fw": "1.0"},
+            "suites": {"latency": {"n": 10, "p95": 5.0, "errors": 0}}}
+    combined = aggregate_runs([dead, good, good])
+    assert combined["suites"]["latency"]["n"] == 10
+    assert combined["suites"]["latency"]["p95"] == 5.0
+    assert combined["device"]["error"] == "down"
+    metrics = [row["metric"] for row in combined["repeat"]["metrics"]]
+    assert "suites.latency.p95" in metrics

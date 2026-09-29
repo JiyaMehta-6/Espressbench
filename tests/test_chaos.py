@@ -219,3 +219,23 @@ def test_chaos_schedule_invalid_via_cli(capsys):
     code = main(["chaos", "--sim", "--schedule", "meteor:1s"])
     assert code == 2
     assert "unknown fault mode" in capsys.readouterr().err
+
+
+def test_run_target_sim_returns_report():
+    from espbench.chaos import run_target
+
+    report = run_target(sim=True, faults=["refuse"], duration=0.05,
+                        recovery_timeout=1.0)
+    assert report["total"] == 1
+    assert report["all_recovered"] is True
+
+
+def test_run_target_validates_inputs():
+    from espbench.chaos import run_target
+
+    with pytest.raises(ValueError, match="faults"):
+        run_target(sim=True, faults=[])
+    with pytest.raises(ValueError, match="host"):
+        run_target(host=None, sim=False, faults=["refuse"])
+    with pytest.raises(ValueError, match="duration"):
+        run_target(sim=True, faults=["refuse"], duration=-1)

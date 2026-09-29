@@ -269,3 +269,58 @@ def test_write_reports(tmp_path):
     assert (tmp_path / "report.json").exists()
     assert (tmp_path / "report.md").exists()
     assert (tmp_path / "junit.xml").exists()
+
+
+def test_suite_failed_flags_device_restarted():
+    from espbench.hil import suite_failed
+
+    assert suite_failed("memory", {"device_restarted": True,
+                                   "leak_detected": False}) is True
+    assert suite_failed("memory", {"device_restarted": False,
+                                   "leak_detected": False}) is False
+
+
+def test_run_suites_rejects_unknown_param():
+    with pytest.raises(ValueError, match="unknown parameter"):
+        run_suites(FakeDevice(seed=1), suites=("latency",),
+                   params={"latency": {"bogus": 1}})
+
+
+def test_run_suites_rejects_non_object_params():
+    with pytest.raises(ValueError, match="must be an object"):
+        run_suites(FakeDevice(seed=1), suites=("latency",),
+                   params={"latency": "junk"})
+
+
+def test_run_suites_reports_progress():
+    seen = []
+    run_suites(FakeDevice(seed=1), suites=("latency", "fuzz"),
+               params={"latency": {"n": 3, "warmup": 1}}, progress=seen.append)
+    assert seen == ["suite latency (1/2)", "suite fuzz (2/2)"]
+
+
+def test_run_soak_emits_progress():
+    seen = []
+    report = run_soak(FakeDevice(seed=1), hours=0, interval=0,
+                      progress=seen.append)
+    assert report["iterations"] == 1
+    assert seen and "iteration 1" in seen[0]
+
+
+def test_soak_counts_reboot_when_boot_count_drops():
+    class _Reflash:
+        def __init__(self):
+            self.calls = 0
+
+        def stats(self):
+            self.calls += 1
+            return {"boot_count": 3 if self.calls < 2 else 1,
+                    "uptime_s": 1, "mem_free": 100}
+
+        @staticmethod
+        def ping():
+            return 1.0
+
+    report = run_soak(_Reflash(), hours=0.0002, interval=0)
+    assert report["reboots"] == 1
+    assert report["passed"] is False

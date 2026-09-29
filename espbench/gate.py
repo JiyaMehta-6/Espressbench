@@ -12,6 +12,7 @@ HIGHER_BETTER = {
 NEUTRAL = {
     "total", "n", "samples", "bytes", "uptime_s", "boot_count", "duration_s",
     "start_free", "end_free", "mem_alloc", "count",
+    "iterations", "elapsed_s", "hours_planned",
 }
 BAD_BOOL = {
     "leak_detected": True,
@@ -47,13 +48,18 @@ def flatten(report):
     def walk_list(items, prefix):
         if not items or not all(isinstance(item, dict) for item in items):
             return
+        named = None
         for key in ("name", "fault", "label"):
             if all(key in item for item in items):
+                named = key
                 names = [str(item[key]) for item in items]
                 if len(set(names)) == len(names):
                     for item in items:
                         walk(item, f"{prefix}.{item[key]}")
                     return
+        if named is not None:
+            for index, item in enumerate(items, 1):
+                walk(item, f"{prefix}.{index}")
 
     def walk(node, prefix):
         if isinstance(node, dict):
@@ -263,6 +269,10 @@ def parse_budget(spec):
         raise ValueError(
             f"invalid budget value {raw.strip()!r} in {spec!r}; expected a number "
             "or true/false") from None
+    if not math.isfinite(limit):
+        raise ValueError(
+            f"invalid budget value {raw.strip()!r} in {spec!r}; "
+            "expected a finite number")
     if operator in (None, "="):
         return path, "<=", limit
     return path, operator, limit
@@ -336,11 +346,16 @@ def aggregate_runs(runs):
     if len(runs) == 1:
         return runs[0]
     flats = [flatten(run) for run in runs]
-    common = [path for path in flats[0] if all(path in flat for flat in flats)]
+    usable = [(run, flat) for run, flat in zip(runs, flats) if run.get("suites")]
+    if not usable:
+        usable = list(zip(runs, flats))
+    usable_flats = [flat for _, flat in usable]
+    order = next((flat for flat in usable_flats if flat), flats[0])
+    common = [path for path in order if all(path in flat for flat in usable_flats)]
     aggregated = {}
     distributions = {}
     for path in common:
-        values = [flat[path] for flat in flats]
+        values = [flat[path] for flat in usable_flats]
         distributions[path] = values
         leaf = path.rsplit(".", 1)[-1]
         if all(isinstance(value, bool) for value in values):
@@ -356,18 +371,24 @@ def aggregate_runs(runs):
                     for key, value in node.items()}
         if isinstance(node, list):
             if node and all(isinstance(item, dict) for item in node):
+                named = None
                 for key in ("name", "fault", "label"):
                     if all(key in item for item in node):
+                        named = key
                         names = [str(item[key]) for item in node]
                         if len(set(names)) == len(names):
                             return [rebuild(item, f"{prefix}.{item[key]}")
                                     for item in node]
+                if named is not None:
+                    return [rebuild(item, f"{prefix}.{index}")
+                            for index, item in enumerate(node, 1)]
             return node
         if prefix in aggregated:
             return aggregated[prefix]
         return node
 
-    combined = {key: rebuild(value, key) for key, value in runs[0].items()}
+    base = usable[0][0]
+    combined = {key: rebuild(value, key) for key, value in base.items()}
     device_error = next(
         (run["device"] for run in runs
          if isinstance(run.get("device"), dict) and "error" in run["device"]),

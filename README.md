@@ -57,12 +57,13 @@ uv venv && uv pip install -e ".[dev,gui]"
 ### 3. Run
 
 ```bash
+espbench doctor                             # environment + device preflight
 espbench run --host 192.168.1.42 --suites latency,memory,fuzz --out reports/
 espbench chaos --host 192.168.1.42 --faults refuse,delay,cut
 espbench replay-record --host 192.168.1.42 --out session.json
 espbench replay-run --fixture session.json
 espbench power --csv power_log.csv --markers markers.csv --capacity 1200
-espbench-gui
+espbench gui                                # or: espbench-gui
 ```
 
 No board? Everything except live runs works against the bundled simulator:
@@ -70,6 +71,28 @@ No board? Everything except live runs works against the bundled simulator:
 ```bash
 espbench run --sim --suites latency,memory,fuzz
 ```
+
+Long commands announce their progress on **stderr** (`run: suite memory (2/3)`,
+`soak: iteration 12 ok`), so pipes and redirects stay clean while CI logs show
+exactly where a run is.
+
+## Desktop GUI
+
+`espbench gui` (or the `espbench-gui` shortcut) opens a dark-themed PySide6
+window with four tabs:
+
+| Tab | What it does |
+|---|---|
+| **Suites** | host/sim config, suite picker, params, **Test connection** probe (fw + ping), live per-suite progress, markdown results with Insights, latency histogram preview |
+| **Soak** | hours/interval, optional suites per iteration, live iteration feed, pass/fail verdict |
+| **Chaos** | fault-mode picker, duration/recovery/delay knobs, timed schedule field, recovery summary |
+| **Power** | current-log CSV + markers analysis, battery projection, markdown export |
+
+Everything runs in a background thread with a progress bar; **Export reports**
+writes the same `report.json` / `report.md` / `junit.xml` as the CLI plus a
+`latency.svg` chart. Host, port and simulator preference are remembered between
+sessions (QSettings), and the device probe never touches the network in sim
+mode. The GUI is fully offline - no telemetry, no accounts.
 
 ## Commands
 
@@ -82,10 +105,12 @@ espbench run --sim --suites latency,memory,fuzz
 | `power` | marker-aligned current-log CSV analysis |
 | `baseline` / `compare` / `check` | quality gates: freeze, diff, budget (see below) |
 | `diff` | behavioural delta between two replay fixtures |
-| `insight` | advisory hints for any saved report |
+| `insight` | advisory hints for any saved report (`--strict` exits 1 on warnings) |
 | `chart` | dependency-free SVG histogram from report samples |
 | `badge` | status badge SVG for one metric |
 | `init` | scaffold the GitHub Actions workflow |
+| `doctor` | preflight: python/GUI/requests versions, local files, device reachability |
+| `gui` | launch the desktop GUI |
 | `--completions bash\|zsh\|fish` | shell completion script |
 
 Exit codes are the CI contract:
@@ -93,8 +118,8 @@ Exit codes are the CI contract:
 | Exit | Meaning |
 |---|---|
 | `0` | passed / no regressions |
-| `1` | suite failure, regression, unrecovered fault, budget breach |
-| `2` | bad input: unknown metric, unreadable report, invalid flag combination |
+| `1` | suite failure, regression, unrecovered fault, budget breach, `doctor` probe failure, `insight --strict` warnings |
+| `2` | bad input: unknown metric, unreadable report, invalid flag or fixture params |
 
 ## Sample output
 
@@ -150,8 +175,9 @@ section only when something deserves attention - dropped pings, tail latency,
 leaks, reboots, unrecovered faults, soak failures. Clean runs stay quiet:
 
 ```bash
-espbench insight reports/report.json   # the same hints, on any saved report
-espbench chart reports/report.json --unit ms        # -> reports/report.svg
+espbench insight reports/report.json              # the same hints, on any saved report
+espbench insight reports/report.json --strict     # exit 1 when warnings exist (CI gate)
+espbench chart reports/report.json --unit ms      # -> reports/report.svg
 espbench chart reports/report.json --title "p95 across repeats" --out p95.svg
 ```
 
@@ -174,8 +200,9 @@ It creates two jobs - `tests` (ruff + pytest against the simulator, no
 hardware in CI) and `sim-report` (a simulated run whose report and insights
 land in the job's **step summary** automatically, with a status-badge SVG
 shipped in the artifact). Every report-producing command (`run`, `chaos`,
-`soak`, `compare`, `check`, `insight`, `init`) appends its markdown to
-`$GITHUB_STEP_SUMMARY` when that variable is set - no wrapper scripts needed.
+`soak`, `compare`, `check`, `insight`, `init`, `power`, `diff`, `baseline`,
+`chart`, `badge`, `replay-*`) appends its markdown to `$GITHUB_STEP_SUMMARY`
+when that variable is set - no wrapper scripts needed.
 
 More CI glue:
 
@@ -272,6 +299,8 @@ of boot/mark/restart/error events) for on-device post-mortems.
 - [x] Lab sessions: soak, timed schedules, fixture reruns, log-on-failure
 - [x] Insights & charts: advisory hints, SVG histograms
 - [x] CI wow: `init` workflow scaffold, step summaries, badges, completions
+- [x] Preflight & progress: `doctor`, stderr progress, `insight --strict`
+- [x] GUI 4-tab overhaul: probe, live progress, histograms, soak/chaos tabs
 - [ ] Device-as-client chaos (MQTT reconnect under broker loss)
 - [ ] Multi-device matrix runs
 - [ ] Trend charts across runs (regression tracking)

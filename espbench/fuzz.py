@@ -25,7 +25,8 @@ def run(device, extra=(), settle=0.0):
     errors = 0
     reboots = 0
     for name, payload in cases:
-        entry = {"name": name, "bytes": len(payload)}
+        data = payload.encode() if isinstance(payload, str) else payload
+        entry = {"name": name, "bytes": len(data)}
         try:
             before = device.stats()
         except DeviceError:
@@ -42,9 +43,18 @@ def run(device, extra=(), settle=0.0):
             time.sleep(settle)
         try:
             after = device.stats()
-            rebooted = bool(before and after["boot_count"] != before["boot_count"])
-        except DeviceError:
+        except (DeviceError, TypeError):
             rebooted = True
+        else:
+            if not isinstance(before, dict) or not isinstance(after, dict):
+                rebooted = True
+            else:
+                boot_before = before.get("boot_count")
+                boot_after = after.get("boot_count")
+                if boot_before is None or boot_after is None:
+                    rebooted = True
+                else:
+                    rebooted = boot_after != boot_before
         if rebooted:
             reboots += 1
         entry["rebooted"] = rebooted

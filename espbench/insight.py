@@ -29,10 +29,12 @@ def hints(report):
             mentioned.add("latency")
         p50 = _number(latency.get("p50"))
         p95 = _number(latency.get("p95"))
-        if p50 and p95 is not None and p95 >= 3 * p50:
+        if p50 is not None and p95 is not None and p50 > 0 and p95 >= 3 * p50:
             items.append(
                 f"warn: tail latency - p95 {p95:g} ms is "
                 f"{round(p95 / p50, 1):g}x p50 {p50:g} ms")
+        elif p50 == 0 and p95 and p95 > 0:
+            items.append(f"warn: tail latency - p95 {p95:g} ms with p50 of 0 ms")
     memory = suites.get("memory")
     if isinstance(memory, dict):
         if memory.get("leak_detected"):

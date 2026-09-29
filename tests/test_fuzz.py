@@ -56,3 +56,45 @@ def test_fuzz_reboot_counts_even_when_echo_raises():
 def test_fuzz_settle_zero_is_fast():
     result = run(FakeDevice(seed=4), settle=0.0)
     assert result["total"] == len(PAYLOADS)
+
+
+def test_fuzz_missing_boot_count_is_conservative_not_a_crash():
+    class _NoBoot:
+        @staticmethod
+        def stats():
+            return {}
+
+        @staticmethod
+        def echo(payload):
+            return 200
+
+    result = run(_NoBoot(), extra=[b"x"])
+    assert result["total"] == len(PAYLOADS) + 1
+    assert result["reboots"] > 0
+    assert result["passed"] is False
+
+
+def test_fuzz_stats_recovered_after_blip_counts_as_reboot():
+    class _Blip:
+        def __init__(self):
+            self.calls = 0
+
+        def stats(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise DeviceError("blip")
+            return {"boot_count": 1}
+
+        @staticmethod
+        def echo(payload):
+            return 200
+
+    result = run(_Blip(), extra=[b"x"])
+    assert result["reboots"] >= 1
+    assert result["passed"] is False
+
+
+def test_fuzz_bytes_counts_encoded_size():
+    result = run(FakeDevice(seed=5), extra=["\u2603"])
+    row = next(r for r in result["results"] if r["name"] == "custom_0")
+    assert row["bytes"] == 3

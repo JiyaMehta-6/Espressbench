@@ -1,4 +1,5 @@
 import json
+import math
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
 
@@ -117,6 +118,37 @@ def to_markdown(results, title="ESP32 Eval Bench Report"):
     return "\n".join(lines)
 
 
+def report_sections(results):
+    suites = results.get("suites", {})
+    sections = {"Device": results.get("device", {}), "Suites": {}}
+    for name, payload in suites.items():
+        sections["Suites"][name] = {k: v for k, v in payload.items()
+                                    if not isinstance(v, (list, dict))}
+    if "fuzz" in suites and suites["fuzz"].get("results"):
+        sections["Fuzz cases"] = {row["name"]: {k: v for k, v in row.items() if k != "name"}
+                                  for row in suites["fuzz"]["results"]}
+    if isinstance(results.get("log"), dict):
+        sections["Device log"] = results["log"]
+    return sections
+
+
+def chaos_sections(report):
+    seen = {}
+    fault_rows = {}
+    for row in report.get("results", []):
+        name = row["fault"]
+        seen[name] = seen.get(name, 0) + 1
+        key = name if seen[name] == 1 else f"{name} #{seen[name]}"
+        fault_rows[key] = {k: v for k, v in row.items() if k != "fault"}
+    return {"Chaos summary": {k: v for k, v in report.items() if k != "results"},
+            "Faults": fault_rows}
+
+
+def soak_sections(report):
+    return {"Soak summary": {k: v for k, v in report.items() if k != "events"},
+            "Events": report.get("events", [])}
+
+
 def _collect_cases(results):
     cases = []
     device = results.get("device")
@@ -160,12 +192,24 @@ def to_junit(results):
     return "\n".join(lines)
 
 
+def _json_safe(node):
+    if isinstance(node, dict):
+        return {key: _json_safe(value) for key, value in node.items()}
+    if isinstance(node, list):
+        return [_json_safe(value) for value in node]
+    if isinstance(node, float) and not math.isfinite(node):
+        return None
+    return node
+
+
 def write_reports(results, out_dir):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     paths = {}
     json_path = out / "report.json"
-    json_path.write_text(json.dumps(results, indent=2, default=str), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(_json_safe(results), indent=2, default=str, allow_nan=False),
+        encoding="utf-8")
     paths["json"] = str(json_path)
     md_path = out / "report.md"
     md_path.write_text(to_markdown(results), encoding="utf-8")

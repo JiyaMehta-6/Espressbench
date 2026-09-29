@@ -173,3 +173,9 @@ def test_run_dead_host_prints_insights(capsys):
     out = capsys.readouterr().out
     assert "Insights" in out
     assert "unreachable" in out
+
+
+def test_hint_flags_zero_p50_with_tail():
+    got = hints({"suites": {"latency": {"p50": 0, "p95": 40.0, "errors": 0}}})
+    assert any("tail latency" in line for line in got)
+    assert hints({"suites": {"latency": {"p50": 0, "p95": 0}}}) == []

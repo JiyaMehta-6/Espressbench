@@ -1,12 +1,13 @@
 import argparse
+import importlib.util
 import json
 import os
-import socket
+import platform
 import sys
 from pathlib import Path
 
 from espbench import __version__
-from espbench.chaos import FaultProxy, parse_schedule, run_chaos, run_schedule
+from espbench.chaos import run_target
 from espbench.completion import completion_script
 from espbench.device import Device
 from espbench.fuzz import run as fuzz_run
@@ -42,8 +43,14 @@ from espbench.replay import (
     load_steps,
     save_steps,
 )
-from espbench.report import to_markdown, write_reports
-from espbench.simulation import EchoServer, FakeDevice
+from espbench.report import (
+    chaos_sections,
+    report_sections,
+    soak_sections,
+    to_markdown,
+    write_reports,
+)
+from espbench.simulation import FakeDevice
 from espbench.svg import badge_svg, histogram_svg
 
 
@@ -52,7 +59,9 @@ def _in_range(kind, low, high=None):
         try:
             value = kind(text)
         except ValueError:
-            raise argparse.ArgumentTypeError(f"expected a {kind.__name__}") from None
+            article = "an" if kind.__name__[:1].lower() in "aeiou" else "a"
+            raise argparse.ArgumentTypeError(
+                f"expected {article} {kind.__name__}") from None
         if value < low or (high is not None and value > high):
             bounds = (f"between {low} and {high}" if high is not None
                       else f"at least {low}")
@@ -124,18 +133,24 @@ def cmd_run(args):
 
     recorders = []
 
-    def next_device():
-        device = make_device()
+    def make_recorder(device):
         if args.bundle is not None:
             recorder = RecordingDevice(device)
             recorders.append(recorder)
             return recorder
         return device
 
-    runs = [run_suites(next_device(), suites=suites, params=params)
-            for _ in range(args.repeat)]
+    def progress(message):
+        print(f"run: {message}", file=sys.stderr, flush=True)
+
+    runs = []
+    for index in range(args.repeat):
+        if args.repeat > 1:
+            progress(f"run {index + 1}/{args.repeat}")
+        runs.append(run_suites(make_recorder(make_device()), suites=suites,
+                               params=params, progress=progress))
     results = aggregate_runs(runs)
-    sections = _sections(results)
+    sections = report_sections(results)
     lines = hints(results)
     if lines:
         sections["Insights"] = lines
@@ -168,80 +183,18 @@ def _run_failed(results):
                for name, payload in results.get("suites", {}).items())
 
 
-def _sections(results):
-    suites = results.get("suites", {})
-    sections = {"Device": results.get("device", {}), "Suites": {}}
-    for name, payload in suites.items():
-        sections["Suites"][name] = {k: v for k, v in payload.items()
-                                    if not isinstance(v, (list, dict))}
-    if "fuzz" in suites and suites["fuzz"].get("results"):
-        sections["Fuzz cases"] = {row["name"]: {k: v for k, v in row.items() if k != "name"}
-                                  for row in suites["fuzz"]["results"]}
-    if isinstance(results.get("log"), dict):
-        sections["Device log"] = results["log"]
-    return sections
-
-
-def _echo_probe(host, port):
-    def probe():
-        try:
-            with socket.create_connection((host, port), timeout=2) as sock:
-                sock.sendall(b"ping")
-                return sock.recv(64) == b"ping"
-        except OSError:
-            return False
-
-    return probe
-
-
 def cmd_chaos(args):
     faults = [s.strip() for s in args.faults.split(",") if s.strip()]
-    phases = parse_schedule(args.schedule) if args.schedule else None
-    if not args.schedule and not faults:
-        raise ValueError("--faults must name at least one fault mode")
-    if not args.sim and not args.host:
-        raise ValueError("--host is required (or pass --sim)")
-    if args.sim:
-        server = EchoServer().start()
-        try:
-            with FaultProxy(server.host, server.port) as proxy:
-                probe = _echo_probe(proxy.host, proxy.port)
-                if phases is not None:
-                    report = run_schedule(
-                        proxy, probe, phases,
+    described = args.schedule or ",".join(faults)
+    print(f"chaos: {described} (duration {args.duration:g}s, "
+          f"recovery {args.recovery_timeout:g}s)", file=sys.stderr, flush=True)
+    report = run_target(host=args.host, port=args.port, sim=args.sim,
+                        faults=faults, schedule=args.schedule,
+                        duration=args.duration,
                         recovery_timeout=args.recovery_timeout,
-                        delay_ms=args.delay_ms, corrupt_rate=args.corrupt_rate)
-                else:
-                    report = run_chaos(proxy, probe, faults=faults,
-                                       duration=args.duration,
-                                       recovery_timeout=args.recovery_timeout,
-                                       delay_ms=args.delay_ms,
-                                       corrupt_rate=args.corrupt_rate)
-        finally:
-            server.stop()
-    else:
-        with FaultProxy(args.host, args.port) as proxy:
-            probe_device = Device(proxy.host, port=proxy.port, timeout=1.0)
-
-            def probe():
-                return probe_device.ping()
-
-            if phases is not None:
-                report = run_schedule(
-                    proxy, probe, phases,
-                    recovery_timeout=args.recovery_timeout,
-                    delay_ms=args.delay_ms, corrupt_rate=args.corrupt_rate)
-            else:
-                report = run_chaos(proxy, probe, faults=faults,
-                                   duration=args.duration,
-                                   recovery_timeout=args.recovery_timeout,
-                                   delay_ms=args.delay_ms,
-                                   corrupt_rate=args.corrupt_rate)
-    sections = {
-        "Chaos summary": {k: v for k, v in report.items() if k != "results"},
-        "Faults": {row["fault"]: {k: v for k, v in row.items() if k != "fault"}
-                   for row in report["results"]},
-    }
+                        delay_ms=args.delay_ms,
+                        corrupt_rate=args.corrupt_rate)
+    sections = chaos_sections(report)
     lines = hints({"chaos": report})
     if lines:
         sections["Insights"] = lines
@@ -259,10 +212,12 @@ def cmd_chaos(args):
 def cmd_soak(args):
     device = _device(args)
     suites = _split_suites(args.suites) if args.suites else []
-    report = run_soak(device, hours=args.hours, interval=args.interval,
-                      suites=suites, params=_run_params(args))
-    sections = {"Soak summary": {k: v for k, v in report.items() if k != "events"},
-                "Events": report["events"]}
+    report = run_soak(
+        device, hours=args.hours, interval=args.interval,
+        suites=suites, params=_run_params(args),
+        progress=lambda message: print(f"soak: {message}", file=sys.stderr,
+                                       flush=True))
+    sections = soak_sections(report)
     lines = hints({"soak": report})
     if lines:
         sections["Insights"] = lines
@@ -280,9 +235,11 @@ def cmd_replay_record(args):
     recorder = RecordingDevice(device)
     outcome = fuzz_run(recorder, settle=args.settle)
     save_steps(recorder.steps, args.out)
-    print(to_markdown({"Recorded fuzz": {k: v for k, v in outcome.items()
-                                         if k != "results"},
-                       "Fixture": {"steps": len(recorder.steps), "path": args.out}}))
+    text = to_markdown({"Recorded fuzz": {k: v for k, v in outcome.items()
+                                          if k != "results"},
+                        "Fixture": {"steps": len(recorder.steps), "path": args.out}})
+    print(text)
+    _append_summary(text)
     return 0 if outcome["passed"] else 1
 
 
@@ -297,7 +254,9 @@ def cmd_replay_run(args):
         "Fixture": {"steps": len(steps), "consumed": device.index,
                     "remaining": device.remaining},
     }
-    print(to_markdown(sections))
+    text = to_markdown(sections)
+    print(text)
+    _append_summary(text)
     return 0 if outcome["passed"] and device.remaining == 0 else 1
 
 
@@ -316,6 +275,7 @@ def cmd_power(args):
         }
     text = to_markdown(sections, title="Power Report")
     print(text)
+    _append_summary(text)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")
@@ -332,10 +292,12 @@ def cmd_baseline(args):
             raise ValueError(f"{args.report} contains no budgetable metrics")
         out = args.out or "budgets.json"
         Path(out).write_text(json.dumps(budgets, indent=2) + "\n", encoding="utf-8")
-        print(to_markdown({"Budgets": {"source": args.report, "out": out,
-                                       "margin_pct": args.margin,
-                                       "count": len(budgets)}},
-                          title="ESP32 Eval Bench Auto Budgets"))
+        text = to_markdown({"Budgets": {"source": args.report, "out": out,
+                                        "margin_pct": args.margin,
+                                        "count": len(budgets)}},
+                           title="ESP32 Eval Bench Auto Budgets")
+        print(text)
+        _append_summary(text)
         return 0
     out = args.out or "baseline.json"
     stamped = stamp_baseline(report, __version__, args.report)
@@ -344,10 +306,12 @@ def cmd_baseline(args):
                  ("suites.latency.p95", "suites.fuzz.passed",
                   "suites.memory.leak_detected", "chaos.worst_recovery_s")
                  if path in flat}
-    print(to_markdown({"Baseline": {"source": args.report, "out": out,
-                                    "metrics": len(flat),
-                                    "headlines": headlines}},
-                      title="ESP32 Eval Bench Baseline"))
+    text = to_markdown({"Baseline": {"source": args.report, "out": out,
+                                     "metrics": len(flat),
+                                     "headlines": headlines}},
+                       title="ESP32 Eval Bench Baseline")
+    print(text)
+    _append_summary(text)
     return 0
 
 
@@ -390,6 +354,7 @@ def cmd_diff(args):
     text = to_markdown({"Differences": rows, "Summary": summary},
                        title="ESP32 Eval Bench Fixture Diff")
     print(text)
+    _append_summary(text)
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")
@@ -398,14 +363,16 @@ def cmd_diff(args):
 
 def cmd_check(args):
     report = load_report(args.report)
-    merged = {}
+    flat = flatten(report)
+    specs = []
     if args.budgets:
-        for spec in load_budget_file(args.budgets):
-            merged[parse_budget(spec)[0]] = spec
-    for spec in args.budget:
-        merged[parse_budget(spec)[0]] = spec
-    if not merged:
+        specs.extend(load_budget_file(args.budgets))
+    specs.extend(args.budget)
+    if not specs:
         raise ValueError("at least one --budget SPEC or a --budgets file is required")
+    merged = {}
+    for spec in specs:
+        merged[resolve_metric(flat, parse_budget(spec)[0])] = spec
     rows, summary = check_budgets(report, list(merged.values()))
     text = to_markdown({"Budgets": rows, "Summary": summary},
                        title="ESP32 Eval Bench Budget Check")
@@ -424,6 +391,8 @@ def cmd_insight(args):
     text = to_markdown(sections, title="ESP32 Eval Bench Insights")
     print(text)
     _append_summary(text)
+    if args.strict and any(line.startswith("warn:") for line in lines):
+        return 1
     return 0
 
 
@@ -456,7 +425,9 @@ def cmd_chart(args):
     svg = histogram_svg(values, title=args.title or label, unit=args.unit)
     out = args.out or str(Path(args.report).with_suffix(".svg"))
     Path(out).write_text(svg, encoding="utf-8")
-    print(f"wrote {out} ({len(values)} samples)")
+    text = f"wrote {out} ({len(values)} samples)"
+    print(text)
+    _append_summary(text)
     return 0
 
 
@@ -477,7 +448,9 @@ def cmd_badge(args):
     svg = badge_svg(label, text, color)
     if args.out:
         Path(args.out).write_text(svg, encoding="utf-8")
-        print(f"wrote {args.out}")
+        line = f"wrote {args.out}"
+        print(line)
+        _append_summary(line)
     else:
         print(svg)
     return 0
@@ -539,6 +512,63 @@ def cmd_init(args):
     print(text)
     _append_summary(text)
     return 0
+
+
+def cmd_doctor(args):
+    rows = []
+    rows.append({"check": "espbench", "status": "ok", "detail": f"v{__version__}"})
+    rows.append({"check": "python", "status": "ok",
+                 "detail": platform.python_version() + " on " + platform.system()})
+    if importlib.util.find_spec("PySide6") is None:
+        rows.append({"check": "gui", "status": "warn",
+                     "detail": "PySide6 not installed; espbench gui is unavailable"})
+    else:
+        from importlib import metadata
+
+        try:
+            version = metadata.version("PySide6")
+        except Exception:
+            version = "installed"
+        rows.append({"check": "gui", "status": "ok", "detail": f"PySide6 {version}"})
+    for name in ("baseline.json", "budgets.json", "report.json"):
+        rows.append({"check": name, "status": "ok" if Path(name).exists() else "skip",
+                     "detail": "present" if Path(name).exists() else "not found"})
+    workflows = sorted(Path(".github/workflows").glob("*.yml")) \
+        if Path(".github/workflows").is_dir() else []
+    rows.append({"check": "ci workflow", "status": "ok" if workflows else "skip",
+                 "detail": ", ".join(p.name for p in workflows) or "not found "
+                           "(run espbench init)"})
+    if args.sim:
+        rows.append({"check": "device", "status": "ok", "detail": "simulator selected"})
+    elif args.host:
+        device = Device(args.host, port=args.port, timeout=3.0)
+        try:
+            stats = device.stats()
+            fw = stats.get("fw") if isinstance(stats, dict) else None
+            if not fw:
+                try:
+                    fw = device.version()
+                except Exception:
+                    fw = "?"
+            ping = device.ping()
+            rows.append({"check": "device", "status": "ok",
+                         "detail": f"{args.host}:{args.port} fw={fw} "
+                                   f"ping={ping:.1f} ms"})
+        except Exception as exc:
+            rows.append({"check": "device", "status": "fail", "detail": str(exc)})
+    else:
+        rows.append({"check": "device", "status": "skip",
+                     "detail": "pass --host to probe a device (or --sim)"})
+    text = to_markdown({"Checks": rows}, title="ESP32 Eval Bench Doctor")
+    print(text)
+    _append_summary(text)
+    return 1 if any(row["status"] == "fail" for row in rows) else 0
+
+
+def cmd_gui(args):
+    from espbench import gui
+
+    return gui.main([])
 
 
 def build_parser():
@@ -655,8 +685,12 @@ def build_parser():
     check.add_argument("--out")
     check.set_defaults(func=cmd_check)
 
-    insight = sub.add_parser("insight", help="print advisory hints for a report")
+    insight = sub.add_parser(
+        "insight", help="print advisory hints for a report "
+                        "(exit 1 with --strict when warnings exist)")
     insight.add_argument("report")
+    insight.add_argument("--strict", action="store_true",
+                         help="exit 1 when any warn-level hint is found")
     insight.set_defaults(func=cmd_insight)
 
     chart = sub.add_parser("chart", help="render a histogram SVG from report samples")
@@ -685,10 +719,25 @@ def build_parser():
                       help="overwrite an existing workflow")
     init.set_defaults(func=cmd_init)
 
+    doctor = sub.add_parser("doctor",
+                            help="check environment, local files and device reachability")
+    _add_device_args(doctor, host_required=False)
+    doctor.set_defaults(func=cmd_doctor)
+
+    gui_parser = sub.add_parser("gui", help="launch the desktop GUI")
+    gui_parser.set_defaults(func=cmd_gui)
+
     return parser
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

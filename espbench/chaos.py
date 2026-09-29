@@ -4,6 +4,9 @@ import socketserver
 import threading
 import time
 
+from espbench.device import Device
+from espbench.simulation import EchoServer
+
 MODES = ("normal", "refuse", "delay", "corrupt", "cut")
 
 
@@ -142,7 +145,7 @@ def run_chaos(proxy, probe, faults=("refuse", "delay", "corrupt", "cut"),
             except Exception:
                 checks.append(False)
             probe_ms.append((time.perf_counter() - start_probe) * 1000)
-            time.sleep(interval)
+            time.sleep(min(interval, max(0.0, deadline - time.time())))
         healthy = all(checks) if checks else None
         entry["healthy_under_fault"] = healthy
         entry["probe_ms_max"] = round(max(probe_ms), 2) if probe_ms else None
@@ -302,3 +305,51 @@ def run_schedule(proxy, probe, phases, recovery_timeout=5.0, interval=0.1,
         "schedule": [f"{mode}:{round(seconds, 3):g}s" for mode, seconds in phases],
         "results": results,
     }
+
+
+def echo_probe(host, port):
+    def probe():
+        try:
+            with socket.create_connection((host, port), timeout=2) as sock:
+                sock.sendall(b"ping")
+                return sock.recv(64) == b"ping"
+        except OSError:
+            return False
+
+    return probe
+
+
+def run_target(host=None, port=80, sim=False, faults=(), schedule=None,
+               duration=1.0, recovery_timeout=5.0, delay_ms=200,
+               corrupt_rate=1.0):
+    faults = list(faults)
+    phases = parse_schedule(schedule) if schedule else None
+    if phases is None and not faults:
+        raise ValueError("--faults must name at least one fault mode")
+    if not sim and not host:
+        raise ValueError("--host is required (or pass --sim)")
+
+    def dispatch(proxy, probe):
+        if phases is not None:
+            return run_schedule(proxy, probe, phases,
+                                recovery_timeout=recovery_timeout,
+                                delay_ms=delay_ms, corrupt_rate=corrupt_rate)
+        return run_chaos(proxy, probe, faults=faults, duration=duration,
+                         recovery_timeout=recovery_timeout,
+                         delay_ms=delay_ms, corrupt_rate=corrupt_rate)
+
+    if sim:
+        server = EchoServer().start()
+        try:
+            with FaultProxy(server.host, server.port) as proxy:
+                return dispatch(proxy, echo_probe(proxy.host, proxy.port))
+        finally:
+            server.stop()
+    probe_timeout = max(5.0, delay_ms / 1000.0 + 2.0)
+    with FaultProxy(host, port) as proxy:
+        probe_device = Device(proxy.host, port=proxy.port, timeout=probe_timeout)
+
+        def probe():
+            return probe_device.ping()
+
+        return dispatch(proxy, probe)

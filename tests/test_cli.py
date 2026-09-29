@@ -365,3 +365,78 @@ def test_run_bundle_with_repeat_merges_recordings(tmp_path):
     assert sum(1 for step in steps if step["op"] == "stats") == 2
     assert sum(1 for step in steps if step["op"] == "version") == 2
     assert sum(1 for step in steps if step["op"] == "ping") == 2 * (3 + 10)
+
+
+def test_doctor_environment_ok(capsys):
+    assert main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert "ESP32 Eval Bench Doctor" in out
+    assert "| espbench |" in out
+
+
+def test_doctor_sim_is_ok(capsys):
+    assert main(["doctor", "--sim"]) == 0
+    assert "simulator selected" in capsys.readouterr().out
+
+
+def test_doctor_dead_host_exits_one():
+    assert main(["doctor", "--host", "127.0.0.1", "--port", "9"]) == 1
+
+
+def test_gui_command_delegates_to_gui_main(monkeypatch):
+    pytest.importorskip("PySide6")
+    import espbench.gui as gui_module
+
+    monkeypatch.setattr(gui_module, "main", lambda argv=None: 0)
+    assert main(["gui"]) == 0
+
+
+def test_run_reports_progress_on_stderr(capsys):
+    assert main(["run", "--sim", "--suites", "latency",
+                 "--latency-n", "3"]) == 0
+    captured = capsys.readouterr()
+    assert "run: suite latency (1/1)" in captured.err
+
+
+def test_soak_reports_progress_on_stderr(capsys):
+    assert main(["soak", "--sim", "--hours", "0"]) == 0
+    captured = capsys.readouterr()
+    assert "soak: iteration 1" in captured.err
+
+
+def test_insight_strict_fails_on_warnings(tmp_path):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(
+        {"suites": {"memory": {"leak_detected": True}}}), encoding="utf-8")
+    assert main(["insight", str(report)]) == 0
+    assert main(["insight", str(report), "--strict"]) == 1
+
+
+def test_insight_strict_passes_on_clean_report(tmp_path):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(
+        {"suites": {"memory": {"leak_detected": False}}}), encoding="utf-8")
+    assert main(["insight", str(report), "--strict"]) == 0
+
+
+def test_check_cli_budget_overrides_budgets_file(tmp_path, capsys):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(
+        {"suites": {"latency": {"p95": 10.0}}}), encoding="utf-8")
+    budgets = tmp_path / "budgets.json"
+    budgets.write_text(json.dumps({"latency.p95": 5}), encoding="utf-8")
+    code = main(["check", str(report), "--budgets", str(budgets),
+                 "--budget", "p95=100"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "| checked | 1 |" in out
+
+
+def test_run_fixture_unknown_param_exits_two(tmp_path):
+    from espbench.replay import save_steps
+
+    fixture = tmp_path / "session.json"
+    save_steps([{"op": "stats", "payload": {"boot_count": 1}}], fixture,
+               run={"suites": ["latency"],
+                    "params": {"latency": {"bogus": 1}}})
+    assert main(["run", "--fixture", str(fixture)]) == 2

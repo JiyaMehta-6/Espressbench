@@ -313,3 +313,65 @@
     and histogram SVGs in the artifact - while the README badge keeps pointing at
     ci.yml. pyproject version untouched.
     Tests: 257 -> 272.
+
+34. **Audit-driven hardening: logic, flow, and a 4-tab GUI overhaul.**
+    A full-codebase audit (buckets: logic bugs, CLI flow gaps, GUI capability
+    gaps) drove this pass. Logic: fuzz reboot detection no longer KeyErrors on
+    a stats payload without boot_count (and no longer silently skips detection
+    when the pre-echo stats failed - unknown is conservatively counted as a
+    reboot, matching the suite's pass/fail contract); fuzz `bytes` now measures
+    the UTF-8 encoding, not str length; suite_failed() treats
+    device_restarted=True as a failure (exit 1, JUnit failure, device log
+    attached), aligning hil with gate.BAD_BOOL and insight; run_suites()
+    validates fixture/CLI suite params against the suite signature before
+    touching the device (typo -> ValueError -> exit 2 instead of an
+    uncatchable TypeError traceback) and gained a progress= callback that the
+    CLI prints per suite on stderr (stderr keeps stdout pipes/redirects clean);
+    run_soak() gained progress=, counts boot_count changes in BOTH directions
+    (reflash mid-soak is a reboot too), and floors interval=0 to 1s only when
+    hours>0.01 so a long tight loop cannot become a request storm (the
+    hours=0 single-pass fast path stays instant); memory.run sleeps between
+    failed samples so a sick device is not hammered back-to-back. gate:
+    NEUTRAL += iterations/elapsed_s/hours_planned (two healthy soaks with
+    different wall-times no longer compare as regressions); parse_budget
+    rejects inf/nan/1e999 (a typo exponent used to mint an always-pass budget);
+    flatten() falls back to index paths for duplicate-named rows (repeat
+    refuse faults used to drop every per-fault metric out of
+    check/compare/badge - now chaos.results.1... stays visible, unnamed lists
+    still skipped as pinned), mirrored by aggregate_runs' rebuild; 
+    aggregate_runs() computes medians from runs that actually have suites (a
+    dead first run no longer erased every later metric) while still stamping
+    the first device error onto the combined report; write_reports() emits
+    strict JSON (non-finite floats become null, allow_nan=False) so jq/CI can
+    read every report. chaos: run_chaos clamps its sleep to the duration
+    deadline (no overshoot), and the whole proxy-target setup moved from
+    cmd_chaos into chaos.run_target() (shared by CLI and the new GUI chaos
+    tab) with the real-device probe timeout scaled to delay_ms
+    (max(5s, delay/1000+2) instead of a hard 1s that mislabelled deep delays
+    as ineffective). insight flags p95 tails even when p50 is exactly 0.
+    Flow: `espbench doctor` (python/PySide6 versions, baseline/budgets/report
+    presence, workflow detection, optional device probe with fw+ping; exit 1
+    only on a failed probe, skip/warn never fails) and `espbench gui` (lazy
+    import) join the command list; insight gains --strict (exit 1 on warn:
+    hints) so advisories can gate CI; _append_summary now covers power, diff,
+    baseline, replay-record/-run, chart and badge too; cmd_check merges
+    --budget flags over --budgets file entries by RESOLVED metric path (a CLI
+    override actually wins instead of double-counting); _in_range says "an
+    int"; main() reconfigures stdout/stderr to utf-8 with errors=replace
+    (device logs with non-CP1252 characters no longer crash a finished run
+    with exit 2). Sections builders moved report_sections/chaos_sections/
+    soak_sections into report.py for CLI/GUI parity. GUI: rewritten around the
+    pinned test contract - Suites tab gains a Test connection probe
+    (fw + ping, never touching the network in sim mode), a progress bar +
+    status line fed by the new run_suites progress callback, Insights merged
+    into the rendered report, a QSvgWidget latency-histogram preview (also
+    written as latency.svg by Export), and QSettings persistence of
+    host/port/sim; new Soak tab (hours/interval/suites, iteration feed,
+    pass/fail verdict, export) and new Chaos tab (fault checkboxes,
+    duration/recovery/delay, schedule field) run through SoakWorker/
+    ChaosWorker on QThreads sharing the RunWorker wiring pattern;
+    MainWindow adds File/Help menus (About shows the version), a status bar,
+    a dark Fusion stylesheet (STYLE), and closeEvent now guards all three run
+    threads; RunWorker keeps its positional signature and emits a new
+    progress signal. pyproject version untouched (0.1.0).
+    Tests: 272 -> 309.
