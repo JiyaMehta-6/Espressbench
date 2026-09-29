@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: uv pip install --system -e ".[dev,gui]"
+      - name: Firmware syntax check
+        run: python -m py_compile firmware/agent.py firmware/boot.py firmware/wifi.example.py
+      - name: Lint
+        run: ruff check .
+      - name: Lock check
+        run: uv lock --check
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -q --junitxml=pytest.xml
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ matrix.python-version }}
+          path: pytest.xml
+          if-no-files-found: ignore
+
+  hardware:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Live suites (requires attached board)
+        run: |
+          if [ -z "${{ vars.ESP_HOST }}" ]; then
+            echo "Set the ESP_HOST repository variable to run live suites."
+            exit 1
+          fi
+          espbench run --host "${{ vars.ESP_HOST }}" --out live-reports/
+      - name: Upload live reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-reports
+          path: live-reports/
+          if-no-files-found: ignore
+
+  sim-report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Simulated run (report + insights land in the step summary)
+        run: espbench run --sim --out reports/
+      - name: Insights
+        run: espbench insight reports/report.json
+      - name: Badge and histogram
+        run: |
+          espbench badge reports/report.json --metric p95 --out reports/badge.svg
+          espbench chart reports/report.json --out reports/histogram.svg
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-report
+          path: reports/
+          if-no-files-found: ignore

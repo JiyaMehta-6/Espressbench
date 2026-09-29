@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "espbench"
+version = "0.1.0"
+description = "Hardware-in-the-loop evaluation bench for ESP32/ESP8266: latency, memory, fuzz, chaos, power, replay."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Jiya Mehta" }]
+keywords = ["esp32", "micropython", "hil", "fuzzing", "chaos", "firmware", "testing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+gui = ["PySide6>=6.6"]
+
+[project.scripts]
+espbench = "espbench.cli:main"
+espbench-gui = "espbench.gui:main"
+
+[project.urls]
+Homepage = "https://github.com/JiyaMehta-6/ESP32-Eval-Bench"
+Repository = "https://github.com/JiyaMehta-6/ESP32-Eval-Bench"
+
+[tool.setuptools.packages.find]
+include = ["espbench*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
