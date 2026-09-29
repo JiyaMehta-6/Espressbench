@@ -440,3 +440,84 @@ def test_run_fixture_unknown_param_exits_two(tmp_path):
                run={"suites": ["latency"],
                     "params": {"latency": {"bogus": 1}}})
     assert main(["run", "--fixture", str(fixture)]) == 2
+
+
+def test_run_fixture_unknown_op_exits_two(tmp_path, capsys):
+    from espbench.replay import save_steps
+
+    fixture = tmp_path / "session.json"
+    save_steps([{"op": "teleport", "when": "now"}], fixture,
+               run={"suites": ["latency"], "params": {}})
+    assert main(["run", "--fixture", str(fixture)]) == 2
+    assert "unknown op 'teleport'" in capsys.readouterr().err
+
+
+def test_run_fixture_unused_steps_exits_one(tmp_path, capsys):
+    rec = tmp_path / "rec"
+    assert main(["run", "--sim", "--suites", "fuzz", "--out", str(rec),
+                 "--bundle"]) == 0
+    payload = json.loads((rec / "session.json").read_text(encoding="utf-8"))
+    payload["steps"].append({"op": "ping", "result": 1.0})
+    (rec / "session.json").write_text(json.dumps(payload), encoding="utf-8")
+    assert main(["run", "--fixture", str(rec / "session.json")]) == 1
+    assert "unused steps" in capsys.readouterr().err
+
+
+def test_compare_without_baseline_exits_two(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(
+        {"suites": {"latency": {"p95": 10.0}}}), encoding="utf-8")
+    assert main(["compare", str(report)]) == 2
+    assert "espbench baseline" in capsys.readouterr().err
+
+
+def test_out_directory_gets_default_names(tmp_path, capsys):
+    budgets = tmp_path / "budgets.json"
+    budgets.write_text(json.dumps({"suites.latency.p95": 100}),
+                       encoding="utf-8")
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(
+        {"suites": {"latency": {"n": 5, "p50": 1.0, "p95": 2.0}}}),
+        encoding="utf-8")
+    assert main(["check", str(report), "--budgets", str(budgets),
+                 "--out", str(tmp_path)]) == 0
+    assert (tmp_path / "check.md").exists()
+    csv = tmp_path / "power.csv"
+    csv.write_text("time_ms,mA\n0,100\n1000,200\n", encoding="utf-8")
+    assert main(["power", "--csv", str(csv), "--out", str(tmp_path)]) == 0
+    assert (tmp_path / "power_report.md").exists()
+    assert main(["badge", str(report), "--metric", "suites.latency.p95",
+                 "--out", str(tmp_path)]) == 0
+    assert (tmp_path / "badge.svg").exists()
+    assert "wrote" in capsys.readouterr().out
+
+
+def test_timeout_flag_accepted_and_bounded(tmp_path, capsys):
+    out = tmp_path / "out"
+    assert main(["run", "--sim", "--suites", "latency", "--latency-n", "5",
+                 "--timeout", "2", "--out", str(out)]) == 0
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "--sim", "--timeout", "0"])
+    assert exc.value.code == 2
+
+
+def test_insight_small_sample_is_info_only(tmp_path, capsys):
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps(
+        {"suites": {"latency": {"n": 5, "errors": 0,
+                                "p50": 10.0, "p95": 12.0}}}),
+        encoding="utf-8")
+    assert main(["insight", str(report)]) == 0
+    out = capsys.readouterr().out
+    assert "info: latency percentiles come from only 5 samples" in out
+    assert main(["insight", str(report), "--strict"]) == 0
+
+
+def test_chaos_progress_on_stderr(capsys):
+    code = main(["chaos", "--sim", "--faults", "refuse", "--duration", "0.05",
+                 "--recovery-timeout", "0.3"])
+    err = capsys.readouterr().err
+    assert code in (0, 1)
+    assert "chaos: fault refuse (1/1)" in err
+    assert "refuse recovered" in err

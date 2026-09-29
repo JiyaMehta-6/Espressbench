@@ -1,3 +1,4 @@
+import json
 import sys
 import time
 from pathlib import Path
@@ -26,6 +27,15 @@ from PySide6.QtWidgets import (
 
 from espbench import __version__
 from espbench.chaos import run_target
+from espbench.gate import (
+    aggregate_runs,
+    check_budgets,
+    compare_reports,
+    firmware_version,
+    load_budget_file,
+    load_report,
+    stamp_baseline,
+)
 from espbench.hil import run_soak, run_suites
 from espbench.insight import hints
 from espbench.power import (
@@ -95,19 +105,26 @@ class RunWorker(QObject):
     failed = Signal(str)
     progress = Signal(str)
 
-    def __init__(self, host, port, sim, suites, params):
+    def __init__(self, host, port, sim, suites, params, repeat=1):
         super().__init__()
         self.host = host
         self.port = port
         self.sim = sim
         self.suites = suites
         self.params = params
+        self.repeat = repeat
 
     def run(self):
         try:
             device = FakeDevice(seed=1) if self.sim else _make_device(self.host, self.port)
-            results = run_suites(device, suites=self.suites, params=self.params,
-                                 progress=self.progress.emit)
+            runs = []
+            for index in range(self.repeat):
+                if self.repeat > 1:
+                    self.progress.emit(f"run {index + 1}/{self.repeat}")
+                runs.append(run_suites(device, suites=self.suites,
+                                      params=self.params,
+                                      progress=self.progress.emit))
+            results = aggregate_runs(runs)
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -164,7 +181,8 @@ class ChaosWorker(QObject):
                                 faults=self.faults, schedule=self.schedule,
                                 duration=self.duration,
                                 recovery_timeout=self.recovery_timeout,
-                                delay_ms=self.delay_ms, corrupt_rate=1.0)
+                                delay_ms=self.delay_ms, corrupt_rate=1.0,
+                                progress=self.progress.emit)
         except Exception as exc:
             self.failed.emit(str(exc))
             return
@@ -242,7 +260,7 @@ def _launch(tab, worker):
 def _begin_run(tab, started):
     tab.run_btn.setEnabled(False)
     tab.export_btn.setEnabled(False)
-    tab.output.setPlainText("running...")
+    tab.output.setPlainText("")
     tab.progress.setRange(0, 0)
     tab.status.setText("starting...")
     tab._started = started
@@ -289,11 +307,14 @@ class SuitesTab(QWidget):
         self.memory_interval.setValue(1.0)
         self.settle = QDoubleSpinBox()
         self.settle.setRange(0.0, 10.0)
+        self.repeat_runs = QSpinBox()
+        self.repeat_runs.setRange(1, 50)
         params = QFormLayout()
         params.addRow("Latency samples", self.latency_n)
         params.addRow("Memory samples", self.memory_samples)
         params.addRow("Memory interval (s)", self.memory_interval)
         params.addRow("Fuzz settle (s)", self.settle)
+        params.addRow("Repeat runs", self.repeat_runs)
 
         self.run_btn = QPushButton("Run")
         self.probe_btn = QPushButton("Test connection")
@@ -361,7 +382,8 @@ class SuitesTab(QWidget):
         self.probe_btn.setEnabled(False)
         _begin_run(self, time.perf_counter())
         worker = RunWorker(self.host.text().strip(), self.port.value(),
-                           self.sim.isChecked(), suites, self.params())
+                           self.sim.isChecked(), suites, self.params(),
+                           repeat=self.repeat_runs.value())
         _launch(self, worker)
 
     def on_probe(self):
@@ -399,6 +421,7 @@ class SuitesTab(QWidget):
 
     def _on_progress(self, message):
         self.status.setText(message)
+        self.output.appendPlainText(message)
 
     def _on_finished(self, results):
         self.results = results
@@ -409,6 +432,13 @@ class SuitesTab(QWidget):
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         sections = report_sections(results)
+        repeat = results.get("repeat")
+        if isinstance(repeat, dict):
+            metrics = [{**row,
+                        "values": ", ".join(str(value)
+                                            for value in row.get("values") or [])}
+                       for row in repeat.get("metrics", []) if isinstance(row, dict)]
+            sections["Repeat"] = {"runs": repeat.get("count"), "metrics": metrics}
         lines = hints(results)
         if lines:
             sections["Insights"] = lines
@@ -547,6 +577,7 @@ class SoakTab(QWidget):
 
     def _on_progress(self, message):
         self.status.setText(message)
+        self.output.appendPlainText(message)
 
     def _on_finished(self, report):
         self.results = report
@@ -683,6 +714,7 @@ class ChaosTab(QWidget):
 
     def _on_progress(self, message):
         self.status.setText(message)
+        self.output.appendPlainText(message)
 
     def _on_finished(self, report):
         self.results = report
@@ -722,6 +754,171 @@ class ChaosTab(QWidget):
             return
         QMessageBox.information(self, "espbench",
                                 "wrote " + ", ".join(paths.values()))
+
+
+class ReportsTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.results = {}
+
+        form = QFormLayout()
+        self.report_path = QLineEdit()
+        self.report_path.setPlaceholderText("path to report.json")
+        browse_btn = QPushButton("Browse...")
+        browse_btn.setProperty("secondary", True)
+        browse_btn.clicked.connect(self._browse)
+        path_row = QHBoxLayout()
+        path_row.addWidget(self.report_path)
+        path_row.addWidget(browse_btn)
+        self.tolerance = QDoubleSpinBox()
+        self.tolerance.setRange(0.0, 1000.0)
+        self.tolerance.setSuffix(" %")
+        form.addRow("Report JSON", path_row)
+        form.addRow("Regression tolerance", self.tolerance)
+
+        self.load_btn = QPushButton("Load report")
+        self.baseline_btn = QPushButton("Set as baseline")
+        self.baseline_btn.setProperty("secondary", True)
+        self.compare_btn = QPushButton("Compare to baseline")
+        self.check_btn = QPushButton("Check budgets")
+        self.check_btn.setProperty("secondary", True)
+        for button in (self.baseline_btn, self.compare_btn, self.check_btn):
+            button.setEnabled(False)
+        self.status = QLabel("ready")
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.load_btn)
+        buttons.addWidget(self.baseline_btn)
+        buttons.addWidget(self.compare_btn)
+        buttons.addWidget(self.check_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addLayout(buttons)
+        layout.addWidget(self.status)
+        layout.addWidget(QLabel("Report"))
+        layout.addWidget(self.output, stretch=1)
+
+        self.load_btn.clicked.connect(self.on_load)
+        self.baseline_btn.clicked.connect(self.on_set_baseline)
+        self.compare_btn.clicked.connect(self.on_compare)
+        self.check_btn.clicked.connect(self.on_check)
+
+    def _path(self):
+        text = self.report_path.text().strip()
+        if not text:
+            QMessageBox.information(self, "espbench", "choose a report.json file")
+            return None
+        return Path(text)
+
+    def _browse(self):
+        path, _ = QFileDialog.getOpenFileName(self, "report JSON", "",
+                                              "JSON (*.json);;All files (*)")
+        if path:
+            self.report_path.setText(path)
+            self.on_load()
+
+    def on_load(self):
+        path = self._path()
+        if path is None:
+            return
+        try:
+            report = load_report(str(path))
+        except Exception as exc:
+            QMessageBox.warning(self, "espbench", str(exc))
+            return
+        self.results = report
+        sections = report_sections(report)
+        lines = hints(report)
+        if lines:
+            sections["Insights"] = lines
+        self.output.setPlainText(to_markdown(sections))
+        self.baseline_btn.setEnabled(True)
+        self.compare_btn.setEnabled(True)
+        self.check_btn.setEnabled(True)
+        self.status.setText(f"loaded {path.name}")
+
+    def _baseline_file(self):
+        path = self._path()
+        if path is None:
+            return None
+        candidates = [path.parent / "baseline.json", Path("baseline.json")]
+        return next((candidate for candidate in candidates
+                     if candidate.exists()), None)
+
+    def on_set_baseline(self):
+        if not self.results:
+            return
+        path = self._path()
+        if path is None:
+            return
+        out = path.parent / "baseline.json"
+        stamped = stamp_baseline(self.results, __version__, str(path))
+        try:
+            out.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "espbench", str(exc))
+            return
+        self.status.setText(f"baseline written to {out}")
+
+    def on_compare(self):
+        if not self.results:
+            return
+        baseline_path = self._baseline_file()
+        if baseline_path is None:
+            QMessageBox.information(self, "espbench",
+                                    "no baseline.json next to the report - "
+                                    "click Set as baseline first")
+            return
+        try:
+            before = load_report(str(baseline_path))
+            rows, summary = compare_reports(before, self.results,
+                                            self.tolerance.value())
+        except Exception as exc:
+            QMessageBox.warning(self, "espbench", str(exc))
+            return
+        sections = {}
+        fw_before, fw_after = firmware_version(before), firmware_version(self.results)
+        if fw_before and fw_after and fw_before != fw_after:
+            sections["Firmware"] = {"before": fw_before, "after": fw_after,
+                                    "note": "different firmware compared"}
+        sections["Comparison"] = rows
+        sections["Summary"] = summary
+        self.output.setPlainText(to_markdown(sections,
+                                             title="ESP32 Eval Bench Comparison"))
+        self.status.setText(
+            f"vs {baseline_path.name}: {summary['regressions']} regression(s), "
+            f"{summary['improved']} improved")
+
+    def on_check(self):
+        if not self.results:
+            return
+        path = self._path()
+        if path is None:
+            return
+        candidates = [path.parent / "budgets.json", Path("budgets.json")]
+        budgets = next((candidate for candidate in candidates
+                        if candidate.exists()), None)
+        if budgets is None:
+            QMessageBox.information(self, "espbench",
+                                    "no budgets.json found next to the report "
+                                    "(create one with espbench baseline --auto)")
+            return
+        try:
+            rows, summary = check_budgets(self.results,
+                                          load_budget_file(str(budgets)))
+        except Exception as exc:
+            QMessageBox.warning(self, "espbench", str(exc))
+            return
+        self.output.setPlainText(to_markdown(
+            {"Budgets": rows, "Summary": summary},
+            title="ESP32 Eval Bench Budget Check"))
+        status = f"budgets: {summary['passed']}/{summary['checked']} passed"
+        if summary["failed"]:
+            status += f", {summary['failed']} FAILED"
+        self.status.setText(status)
 
 
 class PowerTab(QWidget):
@@ -835,20 +1032,33 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ESP32 Eval Bench")
-        self.resize(980, 760)
         self.setStyleSheet(STYLE)
         tabs = QTabWidget()
         self.suites_tab = SuitesTab()
         self.soak_tab = SoakTab()
         self.chaos_tab = ChaosTab()
+        self.reports_tab = ReportsTab()
         self.power_tab = PowerTab()
         tabs.addTab(self.suites_tab, "Suites")
         tabs.addTab(self.soak_tab, "Soak")
         tabs.addTab(self.chaos_tab, "Chaos")
+        tabs.addTab(self.reports_tab, "Reports")
         tabs.addTab(self.power_tab, "Power")
+        self.tabs = tabs
         self.setCentralWidget(tabs)
 
+        geometry = _settings().value("window/geometry")
+        if geometry is not None:
+            try:
+                self.restoreGeometry(geometry)
+            except Exception:
+                self.resize(980, 760)
+        else:
+            self.resize(980, 760)
+
         file_menu = self.menuBar().addMenu("&File")
+        open_action = file_menu.addAction("Open report...")
+        open_action.triggered.connect(self._open_report)
         export_action = file_menu.addAction("Export reports...")
         export_action.triggered.connect(self.suites_tab.on_export)
         file_menu.addSeparator()
@@ -858,6 +1068,10 @@ class MainWindow(QMainWindow):
         about_action = help_menu.addAction("About espbench")
         about_action.triggered.connect(self._about)
         self.statusBar().showMessage(f"espbench {__version__} - ready")
+
+    def _open_report(self):
+        self.tabs.setCurrentWidget(self.reports_tab)
+        self.reports_tab._browse()
 
     def _about(self):
         QMessageBox.about(self, "About espbench",
@@ -877,6 +1091,10 @@ class MainWindow(QMainWindow):
                                             "a run is still active; try again")
                     event.ignore()
                     return
+        try:
+            _settings().setValue("window/geometry", bytes(self.saveGeometry()))
+        except Exception:
+            pass
         event.accept()
 
 

@@ -8,6 +8,10 @@ class ReplayError(ValueError):
     pass
 
 
+KNOWN_OPS = ("echo", "log", "mark", "ping", "restart", "set_sensor", "stats",
+             "version")
+
+
 def _as_bytes(payload):
     return payload.encode() if isinstance(payload, str) else payload
 
@@ -165,12 +169,22 @@ class ReplayDevice:
         step = self._next("mark")
         if "error" in step:
             raise DeviceError(step["error"])
+        recorded = step.get("label")
+        if recorded is not None and recorded != label:
+            raise ReplayError(
+                f"step {self.index - 1}: label mismatch "
+                f"(fixture {recorded!r}, got {label!r})")
         return step.get("status", True)
 
     def set_sensor(self, mode):
         step = self._next("set_sensor")
         if "error" in step:
             raise DeviceError(step["error"])
+        recorded = step.get("mode")
+        if recorded is not None and recorded != mode:
+            raise ReplayError(
+                f"step {self.index - 1}: mode mismatch "
+                f"(fixture {recorded!r}, got {mode!r})")
         return step.get("status", True)
 
     def restart(self):
@@ -205,6 +219,10 @@ def load_fixture(path):
     for index, step in enumerate(payload["steps"]):
         if not isinstance(step, dict) or not isinstance(step.get("op"), str):
             raise ReplayError(f"steps[{index}] must be an object with a string op field")
+        if step["op"] not in KNOWN_OPS:
+            raise ReplayError(
+                f"steps[{index}]: unknown op {step['op']!r}; expected one of "
+                + ", ".join(KNOWN_OPS))
     run = payload.get("run")
     if run is not None and not isinstance(run, dict):
         raise ReplayError("fixture run metadata must be an object")

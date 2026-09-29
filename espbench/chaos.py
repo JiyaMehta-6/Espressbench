@@ -120,7 +120,7 @@ class FaultProxy:
 
 def run_chaos(proxy, probe, faults=("refuse", "delay", "corrupt", "cut"),
               duration=1.0, recovery_timeout=5.0, interval=0.1,
-              delay_ms=200, corrupt_rate=0.5):
+              delay_ms=200, corrupt_rate=0.5, progress=None):
     if duration < 0:
         raise ValueError("duration must be non-negative")
     if recovery_timeout < 0:
@@ -132,8 +132,10 @@ def run_chaos(proxy, probe, faults=("refuse", "delay", "corrupt", "cut"),
     if not 0.0 <= float(corrupt_rate) <= 1.0:
         raise ValueError("corrupt_rate must be between 0 and 1")
     results = []
-    for mode in faults:
+    for index, mode in enumerate(faults, 1):
         entry = {"fault": mode}
+        if progress:
+            progress(f"fault {mode} ({index}/{len(faults)})")
         proxy.controller.set(mode, delay_ms=delay_ms, corrupt_rate=corrupt_rate)
         checks = []
         probe_ms = []
@@ -166,6 +168,8 @@ def run_chaos(proxy, probe, faults=("refuse", "delay", "corrupt", "cut"),
             time.sleep(interval)
         entry["recovered"] = recovered
         entry["recovery_time_s"] = round(time.time() - start, 3) if recovered else None
+        if progress:
+            progress(f"{mode} {'recovered' if recovered else 'unrecovered'}")
         results.append(entry)
     times = [e["recovery_time_s"] for e in results if e["recovery_time_s"] is not None]
     recovered = sum(1 for e in results if e["recovered"])
@@ -221,7 +225,7 @@ def parse_schedule(text):
 
 
 def run_schedule(proxy, probe, phases, recovery_timeout=5.0, interval=0.1,
-                 delay_ms=200, corrupt_rate=0.5):
+                 delay_ms=200, corrupt_rate=0.5, progress=None):
     if recovery_timeout < 0:
         raise ValueError("recovery_timeout must be non-negative")
     if interval < 0:
@@ -234,7 +238,9 @@ def run_schedule(proxy, probe, phases, recovery_timeout=5.0, interval=0.1,
         raise ValueError("schedule must contain at least one phase")
     results = []
     after_fault = False
-    for mode, seconds in phases:
+    for index, (mode, seconds) in enumerate(phases, 1):
+        if progress:
+            progress(f"phase {mode} {seconds:g}s ({index}/{len(phases)})")
         proxy.controller.set(mode, delay_ms=delay_ms, corrupt_rate=corrupt_rate)
         checks = []
         probe_ms = []
@@ -321,7 +327,7 @@ def echo_probe(host, port):
 
 def run_target(host=None, port=80, sim=False, faults=(), schedule=None,
                duration=1.0, recovery_timeout=5.0, delay_ms=200,
-               corrupt_rate=1.0):
+               corrupt_rate=1.0, timeout=5.0, progress=None):
     faults = list(faults)
     phases = parse_schedule(schedule) if schedule else None
     if phases is None and not faults:
@@ -333,10 +339,12 @@ def run_target(host=None, port=80, sim=False, faults=(), schedule=None,
         if phases is not None:
             return run_schedule(proxy, probe, phases,
                                 recovery_timeout=recovery_timeout,
-                                delay_ms=delay_ms, corrupt_rate=corrupt_rate)
+                                delay_ms=delay_ms, corrupt_rate=corrupt_rate,
+                                progress=progress)
         return run_chaos(proxy, probe, faults=faults, duration=duration,
                          recovery_timeout=recovery_timeout,
-                         delay_ms=delay_ms, corrupt_rate=corrupt_rate)
+                         delay_ms=delay_ms, corrupt_rate=corrupt_rate,
+                         progress=progress)
 
     if sim:
         server = EchoServer().start()
@@ -345,7 +353,7 @@ def run_target(host=None, port=80, sim=False, faults=(), schedule=None,
                 return dispatch(proxy, echo_probe(proxy.host, proxy.port))
         finally:
             server.stop()
-    probe_timeout = max(5.0, delay_ms / 1000.0 + 2.0)
+    probe_timeout = max(timeout, delay_ms / 1000.0 + 2.0)
     with FaultProxy(host, port) as proxy:
         probe_device = Device(proxy.host, port=proxy.port, timeout=probe_timeout)
 

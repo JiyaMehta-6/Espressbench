@@ -395,6 +395,17 @@ def test_compare_flaky_distribution_never_gates():
     assert summary["flaky"] == 1
 
 
+def test_compare_flaky_uses_sample_spread():
+    before = _with_repeat(_variant(),
+                          {"suites.latency.p95": [37.0, 50.0, 63.0]})
+    after = _with_repeat(_variant(**{"suites.latency.p95": 70.0}),
+                         {"suites.latency.p95": [70.0, 70.0, 70.0]})
+    rows, summary = compare_reports(before, after)
+    row = next(r for r in rows if r["metric"] == "suites.latency.p95")
+    assert row["verdict"] == "flaky"
+    assert summary["regressions"] == 0
+
+
 def test_compare_point_regression_inside_ci_stays_ok():
     before = _with_repeat(_variant(**{"suites.latency.p95": 50.0}),
                           {"suites.latency.p95": [40.0, 50.0, 60.0]})

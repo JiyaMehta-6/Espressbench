@@ -179,3 +179,12 @@ def test_hint_flags_zero_p50_with_tail():
     got = hints({"suites": {"latency": {"p50": 0, "p95": 40.0, "errors": 0}}})
     assert any("tail latency" in line for line in got)
     assert hints({"suites": {"latency": {"p50": 0, "p95": 0}}}) == []
+
+
+def test_hint_small_sample_is_info_only():
+    got = hints({"suites": {"latency": {"n": 5, "errors": 0,
+                                        "p50": 10.0, "p95": 12.0}}})
+    assert any(line.startswith("info: latency percentiles") for line in got)
+    assert not any(line.startswith("warn:") for line in got)
+    assert hints({"suites": {"latency": {"n": 10, "errors": 0,
+                                         "p50": 10.0, "p95": 12.0}}}) == []

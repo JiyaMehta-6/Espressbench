@@ -309,3 +309,53 @@ def test_load_fixture_rejects_bad_run_metadata(tmp_path):
     fixture.write_text(json.dumps({"version": 1, "steps": [], "run": "x"}))
     with pytest.raises(ReplayError, match="run metadata"):
         load_fixture(fixture)
+
+
+def test_load_fixture_rejects_unknown_op(tmp_path):
+    fixture = tmp_path / "f.json"
+    fixture.write_text(json.dumps(
+        {"version": 1, "steps": [{"op": "teleport"}]}))
+    with pytest.raises(ReplayError, match="unknown op 'teleport'"):
+        load_fixture(fixture)
+
+
+def test_replay_mark_label_mismatch():
+    device = ReplayDevice([{"op": "mark", "label": "boot", "status": True}])
+    with pytest.raises(ReplayError, match="label mismatch"):
+        device.mark("not-boot")
+
+
+def test_replay_set_sensor_mode_mismatch():
+    device = ReplayDevice([{"op": "set_sensor", "mode": "on", "status": True}])
+    with pytest.raises(ReplayError, match="mode mismatch"):
+        device.set_sensor("off")
+
+
+class _FakeResponse:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+
+class _FakeSession:
+    def __init__(self, status_code=None, exc=None):
+        self.status_code = status_code
+        self.exc = exc
+
+    def get(self, url, params=None, timeout=None):
+        if self.exc is not None:
+            raise self.exc
+        return _FakeResponse(self.status_code)
+
+
+def test_device_restart_reflects_status_and_connection():
+    import requests
+
+    from espbench.device import Device
+
+    device = Device("192.0.2.1")
+    device.session = _FakeSession(status_code=200)
+    assert device.restart() is True
+    device.session = _FakeSession(status_code=404)
+    assert device.restart() is False
+    device.session = _FakeSession(exc=requests.RequestException("dropped"))
+    assert device.restart() is True

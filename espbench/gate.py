@@ -126,7 +126,7 @@ def _coefficient_of_variation(values):
     if len(values) < 3:
         return 0.0
     mean = statistics.fmean(values)
-    spread = statistics.pstdev(values)
+    spread = statistics.stdev(values)
     if mean == 0:
         return 0.0 if spread == 0 else float("inf")
     return spread / abs(mean)

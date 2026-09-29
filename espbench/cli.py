@@ -76,13 +76,22 @@ def _device(args):
         return FakeDevice(seed=1)
     if not args.host:
         raise ValueError("--host is required (or pass --sim)")
-    return Device(args.host, port=args.port)
+    return Device(args.host, port=args.port, timeout=args.timeout)
 
 
 def _add_device_args(parser, host_required=True):
     parser.add_argument("--host", required=host_required, help="device IP")
     parser.add_argument("--port", type=_in_range(int, 1, 65535), default=80)
     parser.add_argument("--sim", action="store_true", help="run against the built-in simulator")
+    parser.add_argument("--timeout", type=_in_range(float, 0.1, 60.0), default=5.0,
+                        help="HTTP timeout in seconds (default: 5)")
+
+
+def _out_path(out, default_name):
+    path = Path(out)
+    if str(out).endswith(("/", "\\")) or (path.exists() and path.is_dir()):
+        path = path / default_name
+    return path
 
 
 def _run_params(args):
@@ -111,6 +120,7 @@ def _append_summary(markdown):
 def cmd_run(args):
     if args.fixture and (args.sim or args.host):
         raise ValueError("--fixture cannot be combined with --host or --sim")
+    replay_devices = []
     if args.fixture:
         payload = load_fixture(args.fixture)
         steps = payload["steps"]
@@ -122,7 +132,9 @@ def cmd_run(args):
             and isinstance(meta.get("params"), dict) else _run_params(args)
 
         def make_device():
-            return ReplayDevice(steps)
+            device = ReplayDevice(steps)
+            replay_devices.append(device)
+            return device
     else:
         base_device = _device(args)
         suites = _split_suites(args.suites)
@@ -149,8 +161,11 @@ def cmd_run(args):
             progress(f"run {index + 1}/{args.repeat}")
         runs.append(run_suites(make_recorder(make_device()), suites=suites,
                                params=params, progress=progress))
+    remaining = max((device.remaining for device in replay_devices), default=0)
     results = aggregate_runs(runs)
     sections = report_sections(results)
+    if args.fixture:
+        sections["Fixture"] = {"steps": len(steps), "remaining": remaining}
     lines = hints(results)
     if lines:
         sections["Insights"] = lines
@@ -172,7 +187,13 @@ def cmd_run(args):
         steps = [step for recorder in recorders for step in recorder.steps]
         save_steps(steps, path, run={"suites": suites, "params": params})
         print(f"wrote fixture {path} ({len(steps)} steps)")
-    return 0 if not any(_run_failed(run) for run in runs) else 1
+    if remaining:
+        print(f"run: fixture has {remaining} unused steps - the suites and "
+              "params did not consume the whole recording",
+              file=sys.stderr, flush=True)
+    if remaining or any(_run_failed(run) for run in runs):
+        return 1
+    return 0
 
 
 def _run_failed(results):
@@ -193,7 +214,10 @@ def cmd_chaos(args):
                         duration=args.duration,
                         recovery_timeout=args.recovery_timeout,
                         delay_ms=args.delay_ms,
-                        corrupt_rate=args.corrupt_rate)
+                        corrupt_rate=args.corrupt_rate,
+                        timeout=args.timeout,
+                        progress=lambda message: print(
+                            f"chaos: {message}", file=sys.stderr, flush=True))
     sections = chaos_sections(report)
     lines = hints({"chaos": report})
     if lines:
@@ -234,10 +258,11 @@ def cmd_replay_record(args):
     device = _device(args)
     recorder = RecordingDevice(device)
     outcome = fuzz_run(recorder, settle=args.settle)
-    save_steps(recorder.steps, args.out)
+    out = str(_out_path(args.out, "session.json"))
+    save_steps(recorder.steps, out)
     text = to_markdown({"Recorded fuzz": {k: v for k, v in outcome.items()
                                           if k != "results"},
-                        "Fixture": {"steps": len(recorder.steps), "path": args.out}})
+                        "Fixture": {"steps": len(recorder.steps), "path": out}})
     print(text)
     _append_summary(text)
     return 0 if outcome["passed"] else 1
@@ -277,8 +302,9 @@ def cmd_power(args):
     print(text)
     _append_summary(text)
     if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"wrote {args.out}")
+        out = _out_path(args.out, "power_report.md")
+        out.write_text(text, encoding="utf-8")
+        print(f"wrote {out}")
 
 
 def cmd_baseline(args):
@@ -299,7 +325,8 @@ def cmd_baseline(args):
         print(text)
         _append_summary(text)
         return 0
-    out = args.out or "baseline.json"
+    out = args.out or ("budgets.json" if args.auto else "baseline.json")
+    out = str(_out_path(out, "budgets.json" if args.auto else "baseline.json"))
     stamped = stamp_baseline(report, __version__, args.report)
     Path(out).write_text(json.dumps(stamped, indent=2), encoding="utf-8")
     headlines = {path: flat[path] for path in
@@ -321,6 +348,10 @@ def cmd_compare(args):
                          "or two reports (before after)")
     if len(args.reports) == 1:
         before_path, after_path = "baseline.json", args.reports[0]
+        if not Path(before_path).exists():
+            raise ValueError("baseline.json not found - run "
+                             "'espbench baseline report.json' first, or pass "
+                             "two reports to compare")
     else:
         before_path, after_path = args.reports
     before = load_report(before_path)
@@ -342,8 +373,9 @@ def cmd_compare(args):
     print(text)
     _append_summary(text)
     if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"wrote {args.out}")
+        out = _out_path(args.out, "comparison.md")
+        out.write_text(text, encoding="utf-8")
+        print(f"wrote {out}")
     return 1 if summary["regressions"] else 0
 
 
@@ -356,8 +388,9 @@ def cmd_diff(args):
     print(text)
     _append_summary(text)
     if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"wrote {args.out}")
+        out = _out_path(args.out, "diff.md")
+        out.write_text(text, encoding="utf-8")
+        print(f"wrote {out}")
     return 1 if fixtures_differ(summary) else 0
 
 
@@ -379,8 +412,9 @@ def cmd_check(args):
     print(text)
     _append_summary(text)
     if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(f"wrote {args.out}")
+        out = _out_path(args.out, "check.md")
+        out.write_text(text, encoding="utf-8")
+        print(f"wrote {out}")
     return 1 if summary["failed"] else 0
 
 
@@ -423,8 +457,9 @@ def cmd_chart(args):
     report = load_report(args.report)
     values, label = _sample_values(report)
     svg = histogram_svg(values, title=args.title or label, unit=args.unit)
-    out = args.out or str(Path(args.report).with_suffix(".svg"))
-    Path(out).write_text(svg, encoding="utf-8")
+    out = _out_path(args.out, "report.svg") \
+        if args.out else Path(args.report).with_suffix(".svg")
+    out.write_text(svg, encoding="utf-8")
     text = f"wrote {out} ({len(values)} samples)"
     print(text)
     _append_summary(text)
@@ -447,8 +482,9 @@ def cmd_badge(args):
     label = args.label or path.rsplit(".", 1)[-1]
     svg = badge_svg(label, text, color)
     if args.out:
-        Path(args.out).write_text(svg, encoding="utf-8")
-        line = f"wrote {args.out}"
+        out = _out_path(args.out, "badge.svg")
+        out.write_text(svg, encoding="utf-8")
+        line = f"wrote {out}"
         print(line)
         _append_summary(line)
     else:
@@ -541,7 +577,7 @@ def cmd_doctor(args):
     if args.sim:
         rows.append({"check": "device", "status": "ok", "detail": "simulator selected"})
     elif args.host:
-        device = Device(args.host, port=args.port, timeout=3.0)
+        device = Device(args.host, port=args.port, timeout=args.timeout)
         try:
             stats = device.stats()
             fw = stats.get("fw") if isinstance(stats, dict) else None

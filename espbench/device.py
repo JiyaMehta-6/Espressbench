@@ -83,7 +83,7 @@ class Device:
 
     def restart(self):
         try:
-            self.get("/restart")
+            response = self.get("/restart")
         except DeviceError:
-            pass
-        return True
+            return True
+        return response.status_code == 200

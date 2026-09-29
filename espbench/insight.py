@@ -35,6 +35,9 @@ def hints(report):
                 f"{round(p95 / p50, 1):g}x p50 {p50:g} ms")
         elif p50 == 0 and p95 and p95 > 0:
             items.append(f"warn: tail latency - p95 {p95:g} ms with p50 of 0 ms")
+        n = _number(latency.get("n"))
+        if p95 is not None and n is not None and 0 < n < 10:
+            items.append(f"info: latency percentiles come from only {int(n)} samples")
     memory = suites.get("memory")
     if isinstance(memory, dict):
         if memory.get("leak_detected"):

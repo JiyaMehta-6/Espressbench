@@ -239,3 +239,25 @@ def test_run_target_validates_inputs():
         run_target(host=None, sim=False, faults=["refuse"])
     with pytest.raises(ValueError, match="duration"):
         run_target(sim=True, faults=["refuse"], duration=-1)
+
+
+def test_run_target_reports_progress_to_callback():
+    from espbench.chaos import run_target
+
+    seen = []
+    report = run_target(sim=True, faults=["refuse"], duration=0.05,
+                        recovery_timeout=0.5, progress=seen.append)
+    assert report["total"] == 1
+    assert any(message.startswith("fault refuse (1/1)") for message in seen)
+    assert any("refuse recovered" in message for message in seen)
+
+
+def test_run_target_schedule_reports_phase_progress():
+    from espbench.chaos import run_target
+
+    seen = []
+    report = run_target(sim=True, schedule="refuse:0.05s,normal:0.05s",
+                        recovery_timeout=0.5, progress=seen.append)
+    assert report["total"] >= 1
+    assert any(message.startswith("phase refuse") for message in seen)
+    assert any(message.startswith("phase normal") for message in seen)

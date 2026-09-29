@@ -73,32 +73,36 @@ espbench run --sim --suites latency,memory,fuzz
 ```
 
 Long commands announce their progress on **stderr** (`run: suite memory (2/3)`,
-`soak: iteration 12 ok`), so pipes and redirects stay clean while CI logs show
-exactly where a run is.
+`soak: iteration 12 ok`, `chaos: fault refuse (1/4)`), so pipes and redirects
+stay clean while CI logs show exactly where a run is. Device commands accept
+`--timeout SECONDS` (default 5) for slow links, and any file `--out` may be a
+directory - the command's default filename is used inside it.
 
 ## Desktop GUI
 
 `espbench gui` (or the `espbench-gui` shortcut) opens a dark-themed PySide6
-window with four tabs:
+window with five tabs:
 
 | Tab | What it does |
 |---|---|
-| **Suites** | host/sim config, suite picker, params, **Test connection** probe (fw + ping), live per-suite progress, markdown results with Insights, latency histogram preview |
+| **Suites** | host/sim config, suite picker, params + **repeat runs**, **Test connection** probe (fw + ping), live progress streaming into the results pane, markdown results with Insights, latency histogram preview |
 | **Soak** | hours/interval, optional suites per iteration, live iteration feed, pass/fail verdict |
-| **Chaos** | fault-mode picker, duration/recovery/delay knobs, timed schedule field, recovery summary |
+| **Chaos** | fault-mode picker, duration/recovery/delay knobs, timed schedule field, per-fault progress, recovery summary |
+| **Reports** | load any saved `report.json`, render it with hints, **Set as baseline**, **Compare to baseline** (with tolerance), **Check budgets** against a `budgets.json` |
 | **Power** | current-log CSV + markers analysis, battery projection, markdown export |
 
 Everything runs in a background thread with a progress bar; **Export reports**
 writes the same `report.json` / `report.md` / `junit.xml` as the CLI plus a
 `latency.svg` chart. Host, port and simulator preference are remembered between
-sessions (QSettings), and the device probe never touches the network in sim
-mode. The GUI is fully offline - no telemetry, no accounts.
+sessions (QSettings), window geometry is restored on reopen, and the device
+probe never touches the network in sim mode. The GUI is fully offline - no
+telemetry, no accounts.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `run` | run suites live, `--repeat N` for distributions, `--bundle` to record, `--fixture` to replay |
+| `run` | run suites live, `--repeat N` for distributions, `--bundle` to record, `--fixture` to replay (exits 1 if the fixture has unused steps) |
 | `soak` | endurance loop for N hours (health or suites each iteration) |
 | `chaos` | fault injection: `--faults refuse,delay,...` or timed `--schedule "refuse:2s,normal:1s"` |
 | `replay-record` / `replay-run` | fuzz-only shortcuts for record & replay |
@@ -118,7 +122,7 @@ Exit codes are the CI contract:
 | Exit | Meaning |
 |---|---|
 | `0` | passed / no regressions |
-| `1` | suite failure, regression, unrecovered fault, budget breach, `doctor` probe failure, `insight --strict` warnings |
+| `1` | suite failure, regression, unrecovered fault, budget breach, `doctor` probe failure, `insight --strict` warnings, replayed fixtures with unused steps |
 | `2` | bad input: unknown metric, unreadable report, invalid flag or fixture params |
 
 ## Sample output

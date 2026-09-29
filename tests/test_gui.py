@@ -1,3 +1,4 @@
+import json
 import os
 import time
 
@@ -15,6 +16,7 @@ from espbench.gui import (  # noqa: E402
     ChaosTab,
     MainWindow,
     PowerTab,
+    ReportsTab,
     RunWorker,
     SoakTab,
     SuitesTab,
@@ -317,3 +319,87 @@ def test_device_settings_roundtrip(app, tmp_path, monkeypatch):
     assert fresh.host.text() == "10.0.0.7"
     assert fresh.port.value() == 8080
     assert fresh.sim.isChecked()
+
+
+def test_reports_tab_load_compare_check(app, tmp_path):
+    report = {"device": {"fw": "sim-0.1.0"},
+              "suites": {"latency": {"n": 5, "p50": 10.0, "p95": 12.0,
+                                     "errors": 0}}}
+    report_file = tmp_path / "report.json"
+    report_file.write_text(json.dumps(report), encoding="utf-8")
+    budgets = tmp_path / "budgets.json"
+    budgets.write_text(json.dumps({"suites.latency.p95": 100}),
+                       encoding="utf-8")
+    tab = ReportsTab()
+    tab.report_path.setText(str(report_file))
+    tab.on_load()
+    text = tab.output.toPlainText()
+    assert "ESP32 Eval Bench Report" in text
+    assert "Suites" in text
+    assert "loaded report.json" in tab.status.text()
+    tab.on_set_baseline()
+    assert (tmp_path / "baseline.json").exists()
+    tab.on_compare()
+    text = tab.output.toPlainText()
+    assert "Comparison" in text
+    assert "0 regression" in tab.status.text()
+    tab.on_check()
+    text = tab.output.toPlainText()
+    assert "Budgets" in text
+    assert "1/1 passed" in tab.status.text()
+
+
+def test_reports_tab_requires_report_for_actions(app, monkeypatch):
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *args, **kwargs: messages.append(args[2]))
+    tab = ReportsTab()
+    tab.on_load()
+    tab.on_set_baseline()
+    tab.on_compare()
+    tab.on_check()
+    assert messages and "report.json" in messages[0]
+
+
+def test_reports_tab_missing_baseline_hint(app, tmp_path, monkeypatch):
+    messages = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        lambda *args, **kwargs: messages.append(args[2]))
+    report_file = tmp_path / "report.json"
+    report_file.write_text(json.dumps(
+        {"suites": {"latency": {"p95": 10.0}}}), encoding="utf-8")
+    tab = ReportsTab()
+    tab.report_path.setText(str(report_file))
+    tab.on_load()
+    tab.on_compare()
+    assert messages and "baseline" in messages[0]
+
+
+def test_suites_tab_repeat_aggregates(app, suites_tab):
+    suites_tab.sim.setChecked(True)
+    suites_tab.suite_boxes["memory"].setChecked(False)
+    suites_tab.suite_boxes["fuzz"].setChecked(False)
+    suites_tab.latency_n.setValue(5)
+    suites_tab.repeat_runs.setValue(2)
+    suites_tab.on_run()
+    deadline = time.time() + 30
+    while not suites_tab.run_btn.isEnabled() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.02)
+    text = suites_tab.output.toPlainText()
+    assert "ESP32 Eval Bench Report" in text
+    assert "## Repeat" in text
+
+
+def test_progress_lines_stream_into_output(suites_tab):
+    suites_tab.output.setPlainText("")
+    suites_tab._on_progress("suite latency (1/1)")
+    assert "suite latency (1/1)" in suites_tab.status.text()
+    assert "suite latency (1/1)" in suites_tab.output.toPlainText()
+
+
+def test_mainwindow_reports_tab(app):
+    window = MainWindow()
+    assert isinstance(window.reports_tab, ReportsTab)
+    assert window.tabs.count() == 5
+    window.close()

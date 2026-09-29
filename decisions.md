@@ -375,3 +375,45 @@
     threads; RunWorker keeps its positional signature and emits a new
     progress signal. pyproject version untouched (0.1.0).
     Tests: 272 -> 309.
+
+35. **Round 2: replay strictness, flow conveniences, and a five-tab GUI.**
+    Logic: load_fixture now rejects steps with unknown ops (a hand-edited or
+    truncated fixture fails fast with the list of known ops instead of a
+    KeyError deep inside a suite); ReplayDevice.mark/set_sensor validate the
+    recorded label/mode against the replayed call so a fixture recorded in one
+    context cannot silently answer another (label mismatch / mode mismatch);
+    run --fixture tracks every ReplayDevice it creates and exits 1 with a
+    stderr warning when steps remain unconsumed - suites or params that do not
+    match the recording no longer produce a quietly partial report (a Fixture
+    steps/remaining section is added to the output); Device.restart now
+    returns False for non-200 responses instead of always True (a connection
+    drop still counts as success - the device rebooting and dropping TCP is
+    the expected happy path); gate's coefficient of variation uses the sample
+    standard deviation (statistics.stdev) so n=3 repeat distributions are not
+    under-dispersed - a set like [37,50,63] is now correctly flaky instead of
+    passing a significance gate; insight adds an info-level hint when latency
+    percentiles come from fewer than 10 samples and percentiles exist (info
+    only - never affects insight --strict, and clean reports stay hint-free).
+    Flow: every device-taking command gained --timeout SECONDS (default 5,
+    0.1-60) feeding Device()/the chaos probe instead of hardcoded 5/3;
+    file-producing commands (power, compare, check, diff, badge, chart,
+    baseline, replay-record) accept a directory for --out and fall back to
+    their canonical filename (power_report.md, comparison.md, check.md,
+    diff.md, badge.svg, report.svg, budgets/baseline.json, session.json) via
+    a shared _out_path(); compare against a missing ./baseline.json now errors
+    with "run 'espbench baseline report.json' first" instead of a bare
+    FileNotFoundError; chaos gained per-fault and per-phase progress
+    callbacks (run_chaos/run_schedule/run_target take progress=), surfaced as
+    `chaos: fault refuse (1/4)` on stderr. GUI: new **Reports** tab -
+    load any saved report.json and render it with hints, set it as
+    baseline.json beside the file, compare against the baseline with a
+    tolerance spinbox (firmware mismatch shown as a note), and check budgets
+    from a neighbouring budgets.json, all reusing the gate functions (no
+    duplicated logic); Suites gained a repeat runs spinbox (RunWorker now
+    takes repeat= and aggregates via aggregate_runs, rendering a Repeat
+    section); progress messages now stream live into the results pane of all
+    three run tabs instead of a static "running..." placeholder; chaos
+    progress flows through ChaosWorker; MainWindow restores its window
+    geometry from QSettings, stores the tab widget, and File > Open report...
+    jumps to the Reports tab. pyproject version untouched (0.1.0).
+    Tests: 309 -> 330.
