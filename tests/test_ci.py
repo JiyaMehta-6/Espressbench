@@ -129,7 +129,7 @@ def test_run_appends_github_step_summary(tmp_path, monkeypatch, capsys):
     assert code == 0
     text = summary.read_text(encoding="utf-8")
     assert text.startswith("## ci\n")
-    assert "ESP32 Eval Bench Report" in text
+    assert "Espressbench Report" in text
     assert text.endswith("\n\n")
 
 

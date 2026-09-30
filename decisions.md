@@ -417,3 +417,41 @@
     geometry from QSettings, stores the tab widget, and File > Open report...
     jumps to the Reports tab. pyproject version untouched (0.1.0).
     Tests: 309 -> 330.
+ 36. **Compatibility: 8 of 10 Espressif SoC families, now documented.** The
+    host/agent contract is HTTP + JSON only (firmware/agent.py touches just
+    network, socket, gc, time and machine, all behind hasattr/try-except), so
+    live support follows one rule: MicroPython + WiFi. The README intro stops
+    underclaiming "ESP32 / ESP8266" and a Compatibility section now states that
+    8 of the 10 Espressif families MicroPython supports run live benches
+    (ESP8266, ESP32, S2, S3, C2, C3, C5, C6) while radio-less H2 and P4 fall
+    back to --sim and replay fixtures; any module/devkit on those families
+    (WROOM, WROVER, MINI, DevKitC, NodeMCU, D1 mini, ...) inherits the same
+    support because no chip register or variant is ever touched. Docs-only
+    change - no code, no tests affected. Tests: 330.
+ 37. **README gains a Manual: the full usage path, step by step.** Twelve
+    numbered walkthroughs between Setup and the GUI section take a bare
+    checkout to a CI gate: preflight (doctor + simulator smoke test), live
+    runs, reading verdicts, baseline/compare/check gating, statistical
+    repeats, chaos schedules, overnight soak, record/replay/diff without
+    hardware, power analysis, `init`/badge CI wiring, desktop GUI, and a
+    troubleshooting table of every literal error message the CLI prints
+    (--host is required (or pass --sim), firmware mismatch, unknown suite,
+    invalid budget, fixture/host conflict, unused fixture steps, failed
+    doctor probe, ineffective chaos fault) with its exit code and fix. All
+    examples were verified against cli.py/gate.py parsing (budget syntax
+    METRIC=LIMIT/<=/>=/true|false, budget suffix resolution, fault modes
+    normal/refuse/delay/corrupt/cut). Docs-only - no code or tests affected.
+    Tests: 330.
+ 38. **Rename: the product is now Espressbench.** Every display string moved
+    from "ESP32 Eval Bench" to "Espressbench": markdown titles in report.py
+    and cli.py (Report, Soak, Doctor, Baseline, Comparison, Budget Check,
+    Insights, Fixture Diff, Auto Budgets, Init), the argparse description,
+    the GUI window/application/menu/dialog titles, the status bar, and the
+    About box (now "for Espressif WiFi firmware"); README H1, intro and CI
+    badge URLs now point at JiyaMehta-6/Espressbench; pyproject description
+    and Homepage/Repository URLs follow. Tests updated to pin the new titles
+    (test_cli, test_ci, test_gate, test_gui, test_hil_report). Unchanged on
+    purpose: the package/CLI name `espbench` (Espressbench abbreviated - it
+    was already the command name), espbench.yml from `init`, QSettings keys
+    (organization/application ids where tests rely on them), and the local
+    checkout folder. Version stays 0.1.0. Tests: 330.

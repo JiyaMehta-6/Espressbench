@@ -77,7 +77,7 @@ def test_suites_tab_end_to_end(app, suites_tab):
         time.sleep(0.02)
     assert suites_tab.run_btn.isEnabled()
     text = suites_tab.output.toPlainText()
-    assert "ESP32 Eval Bench Report" in text
+    assert "Espressbench Report" in text
     assert suites_tab.export_btn.isEnabled()
 
 
@@ -211,7 +211,7 @@ def test_suites_run_shows_progress_and_chart(app, suites_tab):
     assert suites_tab.progress.value() == 100
     assert "completed" in suites_tab.status.text()
     text = suites_tab.output.toPlainText()
-    assert "ESP32 Eval Bench Report" in text
+    assert "Espressbench Report" in text
     assert "Suites" in text
     if suites_tab.chart is not None:
         assert not suites_tab.chart.isHidden()
@@ -228,7 +228,7 @@ def test_soak_tab_quick_run(app):
         app.processEvents()
         time.sleep(0.02)
     text = tab.output.toPlainText()
-    assert "ESP32 Eval Bench Soak" in text
+    assert "Espressbench Soak" in text
     assert "Soak summary" in text
     assert tab.export_btn.isEnabled()
     assert "passed" in tab.status.text()
@@ -334,7 +334,7 @@ def test_reports_tab_load_compare_check(app, tmp_path):
     tab.report_path.setText(str(report_file))
     tab.on_load()
     text = tab.output.toPlainText()
-    assert "ESP32 Eval Bench Report" in text
+    assert "Espressbench Report" in text
     assert "Suites" in text
     assert "loaded report.json" in tab.status.text()
     tab.on_set_baseline()
@@ -387,7 +387,7 @@ def test_suites_tab_repeat_aggregates(app, suites_tab):
         app.processEvents()
         time.sleep(0.02)
     text = suites_tab.output.toPlainText()
-    assert "ESP32 Eval Bench Report" in text
+    assert "Espressbench Report" in text
     assert "## Repeat" in text
 
 

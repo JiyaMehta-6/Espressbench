@@ -209,7 +209,7 @@ def test_markdown_sections():
     text = to_markdown({"Device": {"simulated": True},
                         "Suites": {"latency": {"n": 8, "p95": 12.5}},
                         "List": [1, 2]})
-    assert text.startswith("# ESP32 Eval Bench Report")
+    assert text.startswith("# Espressbench Report")
     assert "| p95 |" in text or "p95" in text
     assert "- 1" in text
 

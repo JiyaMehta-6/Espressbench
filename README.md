@@ -1,14 +1,40 @@
-# ESP32 Eval Bench
+# Espressbench
 
-[![CI](https://github.com/JiyaMehta-6/ESP32-Eval-Bench/actions/workflows/ci.yml/badge.svg)](https://github.com/JiyaMehta-6/ESP32-Eval-Bench/actions/workflows/ci.yml)
+[![CI](https://github.com/JiyaMehta-6/Espressbench/actions/workflows/ci.yml/badge.svg)](https://github.com/JiyaMehta-6/Espressbench/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Hardware-in-the-loop evaluation bench for ESP32 / ESP8266 firmware — **chaos engineering for $5 boards**.
+**Espressbench** (CLI: `espbench`) - hardware-in-the-loop evaluation bench for
+Espressif WiFi firmware — **chaos engineering for $5 boards**.
 
 Firmware claims are usually unmeasured: "stable", "low latency", "memory safe".
 This bench turns claims into numbers with a MicroPython agent on the device and a
 host-side harness over WiFi. No cloud, no accounts, no paid tools.
+
+## Compatibility
+
+The host never touches a chip register - it speaks HTTP/JSON to the MicroPython
+agent - so live support follows one rule: **MicroPython + WiFi**. That covers
+**8 of the 10 Espressif SoC families MicroPython supports**, and every module or
+devkit built on them (WROOM, WROVER, MINI, DevKitC, DevKitM, Saola, NodeMCU,
+D1 mini, ...) inherits compatibility unchanged.
+
+| SoC family | WiFi | Live benches | Notes |
+|---|---|---|---|
+| ESP8266 | ✓ | ✓ | the original $2 WiFi chip |
+| ESP32 (SOLO / WROOM / WROVER) | ✓ | ✓ | dual-core Xtensa LX6, reference target |
+| ESP32-S2 | ✓ | ✓ | single-core, native USB |
+| ESP32-S3 | ✓ | ✓ | dual-core + PSRAM |
+| ESP32-C2 | ✓ | ✓ | smallest RAM budget (272 KB) |
+| ESP32-C3 | ✓ | ✓ | RISC-V single-core |
+| ESP32-C5 | ✓ | ✓ | dual-band WiFi 6 |
+| ESP32-C6 | ✓ | ✓ | WiFi 6 |
+| ESP32-H2 | ✗ | sim / replay only | BLE + 802.15.4, no WLAN for `/ping` |
+| ESP32-P4 | ✗ | sim / replay only | no radio on die; pairs with a C6 |
+
+Radio-less parts still run every hardware-free feature - `--sim` suites, replay
+fixtures, `diff`, `compare`, `check`, insights, charts - only live `run`,
+`soak`, `chaos` and `replay-record` need the radio.
 
 ## Suites
 
@@ -77,6 +103,156 @@ Long commands announce their progress on **stderr** (`run: suite memory (2/3)`,
 stay clean while CI logs show exactly where a run is. Device commands accept
 `--timeout SECONDS` (default 5) for slow links, and any file `--out` may be a
 directory - the command's default filename is used inside it.
+
+## Manual
+
+A guided tour from a bare checkout to a CI gate. Every block is copy-paste, and
+every step's exit code is the one CI uses (`0` pass, `1` fail, `2` bad input -
+see **Commands** below). Hardware-free commands accept `--sim` instead of
+`--host`.
+
+### 1. Preflight
+
+```bash
+espbench doctor                       # python/GUI versions, local files, probes
+espbench doctor --host 192.168.1.42   # ...and can the board be reached?
+espbench run --sim --suites latency --latency-n 10   # smoke-test the pipeline
+```
+
+`doctor` exits 1 when a probe fails, so it gates CI as-is. Run the simulator
+once before touching hardware: it exercises the identical code path minus the
+radio.
+
+### 2. Run suites against real hardware
+
+```bash
+espbench run --host 192.168.1.42 --suites latency,memory,fuzz \
+  --latency-n 300 --memory-samples 40 --settle 2 --out reports/
+```
+
+Progress streams to stderr, so redirects stay clean. The run writes
+`reports/report.json`, `reports/report.md` and `reports/junit.xml`. Knobs:
+`--port 8080` for a non-default agent port, `--timeout 10` for slow links,
+`--repeat 5` for distributions (step 5).
+
+### 3. Read the verdict
+
+```bash
+espbench insight reports/report.json            # advisory hints on any report
+espbench insight reports/report.json --strict   # exit 1 on warnings: the CI form
+espbench chart reports/report.json --unit ms    # histogram -> reports/report.svg
+```
+
+`run` already prints an **Insights** section when a report has something to
+say - clean runs stay quiet. `--strict` turns every warning into exit 1.
+
+### 4. Freeze a run, gate the next one
+
+```bash
+espbench baseline reports/report.json           # golden run -> baseline.json
+espbench run --out reports/                     # candidate firmware
+espbench compare reports/report.json            # exit 1 on any regression
+espbench check reports/report.json --budget "latency.p95<=50" \
+  --budget "memory.leak_detected=false"         # exit 1 on any breach
+```
+
+`compare` prints per-metric deltas with automatic directions and refuses
+reports from different firmware (exit 2) unless you pass `--allow-mismatch`.
+Rather than hand-writing budgets: `espbench baseline reports/report.json --auto
+--margin 20` derives `budgets.json` (ceiling = value + 20 %), then
+`check --budgets budgets.json` gates on it.
+
+### 5. Repeat until it is statistics, not luck
+
+```bash
+espbench run --repeat 5 --out a/ && espbench run --repeat 5 --out b/
+espbench compare a/report.json b/report.json    # regression | improved | ok | flaky
+```
+
+Medians across repeats, a bootstrap confidence interval on the difference, and
+noisy metrics labelled `flaky` (they never fail the gate). Per-run JSON lands
+under `out/runs/`.
+
+### 6. Break it on purpose (chaos)
+
+```bash
+espbench chaos --host 192.168.1.42 --faults refuse,delay,cut --duration 2
+espbench chaos --host 192.168.1.42 --schedule "refuse:2s,normal:1s,refuse:2s"
+```
+
+Fault modes: `refuse`, `delay`, `corrupt`, `cut` (`normal` is the control
+phase a schedule uses to measure recovery). The report only counts faults that
+actually landed - an ineffective proxy or an unrecovered fault fails the run.
+
+### 7. Leave it running overnight (soak)
+
+```bash
+espbench soak --host 192.168.1.42 --hours 8 --interval 60 --suites latency,memory
+espbench soak --sim --hours 0                  # single health pass, exit 0/1
+```
+
+Health (or the chosen suites) every interval until the hour budget runs out;
+any failure or reboot fails the run, and the last 50 events ship in the report
+for post-mortem.
+
+### 8. Work without hardware (record, replay, diff)
+
+```bash
+espbench run --host 192.168.1.42 --out fw-1.0/ --bundle
+espbench run --host 192.168.1.42 --out fw-1.1/ --bundle
+espbench run --fixture fw-1.0/session.json          # board unplugged
+espbench diff fw-1.0/session.json fw-1.1/session.json   # exit 1 on behaviour change
+```
+
+Fuzz-only shortcuts: `replay-record --out session.json` and `replay-run
+--fixture session.json`. A replay whose fixture has steps left over exits 1 -
+the suites did not consume the recording. `--fixture` cannot be combined with
+`--host` or `--sim`.
+
+### 9. Measure what it draws (power)
+
+```bash
+espbench power --csv power_log.csv --markers markers.csv --capacity 1200 \
+  --out power_report.md
+```
+
+Logger CSV columns are `time_ms,mA`; the optional markers file
+(`time_ms,label`) aligns operations to current draw, and `--capacity` (mAh)
+turns the trace into a battery-life projection.
+
+### 10. Wire it into CI
+
+```bash
+espbench init                          # -> .github/workflows/espbench.yml
+espbench badge reports/report.json --metric p95 --out reports/badge.svg
+```
+
+Every report-producing command appends its markdown to `$GITHUB_STEP_SUMMARY`
+automatically; JUnit XML and live-hardware reports upload as artifacts. Gate on
+exit codes only - no wrapper scripts.
+
+### 11. From the desktop
+
+```bash
+espbench gui                           # or: espbench-gui
+```
+
+Five tabs (Suites, Soak, Chaos, Reports, Power): set host or sim, **Test
+connection**, run, watch live progress, export. Same reports as the CLI, host
+and port remembered between sessions, fully offline.
+
+### 12. When it goes wrong
+
+| You see (exit) | Meaning | Fix |
+|---|---|---|
+| `error: --host is required (or pass --sim)` (2) | live command with no target | add `--host <ip>` or `--sim` |
+| `error: firmware mismatch: ... --allow-mismatch ...` (2) | comparing reports from different agent builds | re-record the baseline, or compare on purpose with `--allow-mismatch` |
+| `error: unknown suite 'x'; expected one of ...` (2) | typo in `--suites` | valid suites: `latency`, `memory`, `fuzz` |
+| `error: invalid budget ...` (2) | malformed `--budget` | `METRIC=LIMIT`, `METRIC<=LIMIT`, `METRIC>=LIMIT` or `METRIC=false` |
+| `error: --fixture cannot be combined with --host or --sim` (2) | replay mixed with a live target | drop the device flags for fixture runs |
+| `run: fixture has N unused steps` (1) | replay never reached the end of the recording | match the suites/params used when recording, or treat as a real failure |
+| `doctor` probe failed (1) | board unreachable | check IP/WiFi, raise `--timeout` for slow links |
+| chaos fault reported *ineffective* (1) | the proxy never sat in the path | use a positive `--duration` and a `--port` that matches the agent |
 
 ## Desktop GUI
 

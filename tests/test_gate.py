@@ -264,7 +264,7 @@ def test_cli_baseline_writes_stamp_and_ignores_meta(tmp_path, capsys):
     report = _write(tmp_path, "report.json", REPORT)
     out = tmp_path / "baseline.json"
     assert main(["baseline", str(report), "--out", str(out)]) == 0
-    assert "# ESP32 Eval Bench Baseline" in capsys.readouterr().out
+    assert "# Espressbench Baseline" in capsys.readouterr().out
     stamped = json.loads(out.read_text(encoding="utf-8"))
     assert stamped["_meta"]["espbench"] == __version__
     assert stamped["_meta"]["source"] == str(report)

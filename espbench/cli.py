@@ -245,7 +245,7 @@ def cmd_soak(args):
     lines = hints({"soak": report})
     if lines:
         sections["Insights"] = lines
-    text = to_markdown(sections, title="ESP32 Eval Bench Soak")
+    text = to_markdown(sections, title="Espressbench Soak")
     print(text)
     _append_summary(text)
     if args.out:
@@ -321,7 +321,7 @@ def cmd_baseline(args):
         text = to_markdown({"Budgets": {"source": args.report, "out": out,
                                         "margin_pct": args.margin,
                                         "count": len(budgets)}},
-                           title="ESP32 Eval Bench Auto Budgets")
+                           title="Espressbench Auto Budgets")
         print(text)
         _append_summary(text)
         return 0
@@ -336,7 +336,7 @@ def cmd_baseline(args):
     text = to_markdown({"Baseline": {"source": args.report, "out": out,
                                      "metrics": len(flat),
                                      "headlines": headlines}},
-                       title="ESP32 Eval Bench Baseline")
+                       title="Espressbench Baseline")
     print(text)
     _append_summary(text)
     return 0
@@ -369,7 +369,7 @@ def cmd_compare(args):
                                  "note": "different firmware compared "
                                          "(--allow-mismatch)"},
                     **sections}
-    text = to_markdown(sections, title="ESP32 Eval Bench Comparison")
+    text = to_markdown(sections, title="Espressbench Comparison")
     print(text)
     _append_summary(text)
     if args.out:
@@ -384,7 +384,7 @@ def cmd_diff(args):
     after = load_steps(args.after)
     rows, summary = diff_steps(before, after)
     text = to_markdown({"Differences": rows, "Summary": summary},
-                       title="ESP32 Eval Bench Fixture Diff")
+                       title="Espressbench Fixture Diff")
     print(text)
     _append_summary(text)
     if args.out:
@@ -408,7 +408,7 @@ def cmd_check(args):
         merged[resolve_metric(flat, parse_budget(spec)[0])] = spec
     rows, summary = check_budgets(report, list(merged.values()))
     text = to_markdown({"Budgets": rows, "Summary": summary},
-                       title="ESP32 Eval Bench Budget Check")
+                       title="Espressbench Budget Check")
     print(text)
     _append_summary(text)
     if args.out:
@@ -422,7 +422,7 @@ def cmd_insight(args):
     report = load_report(args.report)
     lines = hints(report)
     sections = {"Insights": lines or ["no hints - the report looks clean"]}
-    text = to_markdown(sections, title="ESP32 Eval Bench Insights")
+    text = to_markdown(sections, title="Espressbench Insights")
     print(text)
     _append_summary(text)
     if args.strict and any(line.startswith("warn:") for line in lines):
@@ -544,7 +544,7 @@ def cmd_init(args):
             "the sim-report job posts its report to the step summary automatically",
         ],
     }
-    text = to_markdown(sections, title="ESP32 Eval Bench Init")
+    text = to_markdown(sections, title="Espressbench Init")
     print(text)
     _append_summary(text)
     return 0
@@ -595,7 +595,7 @@ def cmd_doctor(args):
     else:
         rows.append({"check": "device", "status": "skip",
                      "detail": "pass --host to probe a device (or --sim)"})
-    text = to_markdown({"Checks": rows}, title="ESP32 Eval Bench Doctor")
+    text = to_markdown({"Checks": rows}, title="Espressbench Doctor")
     print(text)
     _append_summary(text)
     return 1 if any(row["status"] == "fail" for row in rows) else 0
@@ -608,8 +608,9 @@ def cmd_gui(args):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(prog="espbench",
-                                     description="HIL evaluation bench for ESP32/ESP8266")
+    parser = argparse.ArgumentParser(
+        prog="espbench",
+        description="Espressbench - HIL evaluation bench for Espressif WiFi firmware")
     parser.add_argument("--version", action="version", version=f"espbench {__version__}")
     parser.add_argument("--completions", choices=("bash", "zsh", "fish"),
                         help="print a shell completion script and exit "

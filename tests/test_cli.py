@@ -17,7 +17,7 @@ def test_run_sim(tmp_path, capsys):
                  "--latency-n", "8", "--out", str(out)])
     assert code == 0
     captured = capsys.readouterr().out
-    assert "ESP32 Eval Bench Report" in captured
+    assert "Espressbench Report" in captured
     assert (out / "report.json").exists()
     assert (out / "junit.xml").exists()
     payload = json.loads((out / "report.json").read_text())
@@ -370,7 +370,7 @@ def test_run_bundle_with_repeat_merges_recordings(tmp_path):
 def test_doctor_environment_ok(capsys):
     assert main(["doctor"]) == 0
     out = capsys.readouterr().out
-    assert "ESP32 Eval Bench Doctor" in out
+    assert "Espressbench Doctor" in out
     assert "| espbench |" in out
 
 

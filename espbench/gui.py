@@ -372,10 +372,10 @@ class SuitesTab(QWidget):
     def on_run(self):
         suites = self.selected_suites()
         if not suites:
-            QMessageBox.information(self, "espbench", "select at least one suite")
+            QMessageBox.information(self, "Espressbench", "select at least one suite")
             return
         if not self.sim.isChecked() and not self.host.text().strip():
-            QMessageBox.information(self, "espbench",
+            QMessageBox.information(self, "Espressbench",
                                     "enter a device host or enable the simulator")
             return
         _save_device_settings(self.host, self.port, self.sim, "suites")
@@ -392,7 +392,7 @@ class SuitesTab(QWidget):
             return
         host = self.host.text().strip()
         if not host:
-            QMessageBox.information(self, "espbench",
+            QMessageBox.information(self, "Espressbench",
                                     "enter a device host or enable the simulator")
             return
         self.probe_btn.setEnabled(False)
@@ -482,9 +482,9 @@ class SuitesTab(QWidget):
                     encoding="utf-8")
                 paths["chart"] = str(chart_path)
         except OSError as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
-        QMessageBox.information(self, "espbench",
+        QMessageBox.information(self, "Espressbench",
                                 "wrote " + ", ".join(paths.values()))
 
 
@@ -561,7 +561,7 @@ class SoakTab(QWidget):
 
     def on_run(self):
         if not self.sim.isChecked() and not self.host.text().strip():
-            QMessageBox.information(self, "espbench",
+            QMessageBox.information(self, "Espressbench",
                                     "enter a device host or enable the simulator")
             return
         _save_device_settings(self.host, self.port, self.sim, "soak")
@@ -591,7 +591,7 @@ class SoakTab(QWidget):
         if lines:
             sections["Insights"] = lines
         self.output.setPlainText(to_markdown(sections,
-                                             title="ESP32 Eval Bench Soak"))
+                                             title="Espressbench Soak"))
         verdict = "passed" if report.get("passed") else "FAILED"
         self.status.setText(
             f"soak {verdict} - {report.get('iterations', 0)} iterations "
@@ -613,9 +613,9 @@ class SoakTab(QWidget):
         try:
             paths = write_reports({"soak": self.results}, directory)
         except OSError as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
-        QMessageBox.information(self, "espbench",
+        QMessageBox.information(self, "Espressbench",
                                 "wrote " + ", ".join(paths.values()))
 
 
@@ -694,11 +694,11 @@ class ChaosTab(QWidget):
     def on_run(self):
         schedule = self.schedule.text().strip()
         if not schedule and not self.selected_faults():
-            QMessageBox.information(self, "espbench",
+            QMessageBox.information(self, "Espressbench",
                                     "select at least one fault mode or enter a schedule")
             return
         if not self.sim.isChecked() and not self.host.text().strip():
-            QMessageBox.information(self, "espbench",
+            QMessageBox.information(self, "Espressbench",
                                     "enter a device host or enable the simulator")
             return
         _save_device_settings(self.host, self.port, self.sim, "chaos")
@@ -750,9 +750,9 @@ class ChaosTab(QWidget):
         try:
             paths = write_reports({"chaos": self.results}, directory)
         except OSError as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
-        QMessageBox.information(self, "espbench",
+        QMessageBox.information(self, "Espressbench",
                                 "wrote " + ", ".join(paths.values()))
 
 
@@ -809,7 +809,7 @@ class ReportsTab(QWidget):
     def _path(self):
         text = self.report_path.text().strip()
         if not text:
-            QMessageBox.information(self, "espbench", "choose a report.json file")
+            QMessageBox.information(self, "Espressbench", "choose a report.json file")
             return None
         return Path(text)
 
@@ -827,7 +827,7 @@ class ReportsTab(QWidget):
         try:
             report = load_report(str(path))
         except Exception as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
         self.results = report
         sections = report_sections(report)
@@ -859,7 +859,7 @@ class ReportsTab(QWidget):
         try:
             out.write_text(json.dumps(stamped, indent=2), encoding="utf-8")
         except OSError as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
         self.status.setText(f"baseline written to {out}")
 
@@ -868,7 +868,7 @@ class ReportsTab(QWidget):
             return
         baseline_path = self._baseline_file()
         if baseline_path is None:
-            QMessageBox.information(self, "espbench",
+            QMessageBox.information(self, "Espressbench",
                                     "no baseline.json next to the report - "
                                     "click Set as baseline first")
             return
@@ -877,7 +877,7 @@ class ReportsTab(QWidget):
             rows, summary = compare_reports(before, self.results,
                                             self.tolerance.value())
         except Exception as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
         sections = {}
         fw_before, fw_after = firmware_version(before), firmware_version(self.results)
@@ -887,7 +887,7 @@ class ReportsTab(QWidget):
         sections["Comparison"] = rows
         sections["Summary"] = summary
         self.output.setPlainText(to_markdown(sections,
-                                             title="ESP32 Eval Bench Comparison"))
+                                             title="Espressbench Comparison"))
         self.status.setText(
             f"vs {baseline_path.name}: {summary['regressions']} regression(s), "
             f"{summary['improved']} improved")
@@ -902,7 +902,7 @@ class ReportsTab(QWidget):
         budgets = next((candidate for candidate in candidates
                         if candidate.exists()), None)
         if budgets is None:
-            QMessageBox.information(self, "espbench",
+            QMessageBox.information(self, "Espressbench",
                                     "no budgets.json found next to the report "
                                     "(create one with espbench baseline --auto)")
             return
@@ -910,11 +910,11 @@ class ReportsTab(QWidget):
             rows, summary = check_budgets(self.results,
                                           load_budget_file(str(budgets)))
         except Exception as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
         self.output.setPlainText(to_markdown(
             {"Budgets": rows, "Summary": summary},
-            title="ESP32 Eval Bench Budget Check"))
+            title="Espressbench Budget Check"))
         status = f"budgets: {summary['passed']}/{summary['checked']} passed"
         if summary["failed"]:
             status += f", {summary['failed']} FAILED"
@@ -985,12 +985,12 @@ class PowerTab(QWidget):
         self.report_text = ""
         path = self.csv_path.text().strip()
         if not path:
-            QMessageBox.information(self, "espbench", "choose a current log CSV")
+            QMessageBox.information(self, "Espressbench", "choose a current log CSV")
             return
         try:
             rows = parse(Path(path).read_text(encoding="utf-8"))
         except Exception as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
         self.rows = rows
         sections = {"Power summary": summarize(rows),
@@ -1023,15 +1023,15 @@ class PowerTab(QWidget):
         try:
             Path(path).write_text(self.report_text, encoding="utf-8")
         except OSError as exc:
-            QMessageBox.warning(self, "espbench", str(exc))
+            QMessageBox.warning(self, "Espressbench", str(exc))
             return
-        QMessageBox.information(self, "espbench", f"wrote {path}")
+        QMessageBox.information(self, "Espressbench", f"wrote {path}")
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ESP32 Eval Bench")
+        self.setWindowTitle("Espressbench")
         self.setStyleSheet(STYLE)
         tabs = QTabWidget()
         self.suites_tab = SuitesTab()
@@ -1065,19 +1065,19 @@ class MainWindow(QMainWindow):
         quit_action = file_menu.addAction("Quit")
         quit_action.triggered.connect(self.close)
         help_menu = self.menuBar().addMenu("&Help")
-        about_action = help_menu.addAction("About espbench")
+        about_action = help_menu.addAction("About Espressbench")
         about_action.triggered.connect(self._about)
-        self.statusBar().showMessage(f"espbench {__version__} - ready")
+        self.statusBar().showMessage(f"Espressbench {__version__} - ready")
 
     def _open_report(self):
         self.tabs.setCurrentWidget(self.reports_tab)
         self.reports_tab._browse()
 
     def _about(self):
-        QMessageBox.about(self, "About espbench",
-                          f"<b>espbench {__version__}</b><br>"
+        QMessageBox.about(self, "About Espressbench",
+                          f"<b>Espressbench {__version__}</b><br>"
                           "Hardware-in-the-loop evaluation bench for "
-                          "ESP32/ESP8266 firmware<br><br>"
+                          "Espressif WiFi firmware<br><br>"
                           "Run suites, soak, chaos and power analysis - "
                           "all 100% free and offline.")
 
@@ -1087,7 +1087,7 @@ class MainWindow(QMainWindow):
             if thread is not None and thread.isRunning():
                 thread.quit()
                 if not thread.wait(1500):
-                    QMessageBox.information(self, "espbench",
+                    QMessageBox.information(self, "Espressbench",
                                             "a run is still active; try again")
                     event.ignore()
                     return
@@ -1100,7 +1100,7 @@ class MainWindow(QMainWindow):
 
 def main(argv=None):
     app = QApplication(argv if argv is not None else sys.argv)
-    app.setApplicationName("ESP32 Eval Bench")
+    app.setApplicationName("Espressbench")
     app.setOrganizationName("espbench")
     app.setStyle("Fusion")
     app.setStyleSheet(STYLE)

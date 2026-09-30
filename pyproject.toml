@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "espbench"
 version = "0.1.0"
-description = "Hardware-in-the-loop evaluation bench for ESP32/ESP8266: latency, memory, fuzz, chaos, power, replay."
+description = "Espressbench: HIL evaluation bench for Espressif WiFi firmware - latency, memory, fuzz, chaos, power, replay."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -33,8 +33,8 @@ espbench = "espbench.cli:main"
 espbench-gui = "espbench.gui:main"
 
 [project.urls]
-Homepage = "https://github.com/JiyaMehta-6/ESP32-Eval-Bench"
-Repository = "https://github.com/JiyaMehta-6/ESP32-Eval-Bench"
+Homepage = "https://github.com/JiyaMehta-6/Espressbench"
+Repository = "https://github.com/JiyaMehta-6/Espressbench"
 
 [tool.setuptools.packages.find]
 include = ["espbench*"]

@@ -105,7 +105,7 @@ def _render(payload, level):
     return [_cell(payload)]
 
 
-def to_markdown(results, title="ESP32 Eval Bench Report"):
+def to_markdown(results, title="Espressbench Report"):
     lines = [f"# {title}", ""]
     for section, payload in results.items():
         lines.append(f"## {_heading(section)}")
