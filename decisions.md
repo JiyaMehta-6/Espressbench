@@ -455,3 +455,18 @@
     was already the command name), espbench.yml from `init`, QSettings keys
     (organization/application ids where tests rely on them), and the local
     checkout folder. Version stays 0.1.0. Tests: 330.
+ 39. **CI install fix (first-ever Actions run failed).** The repo went
+    public as JiyaMehta-6/Espressbench and CI failed at the Install step:
+    `uv pip install --system` targets the runner's system interpreter, which
+    Ubuntu 24.04 marks PEP 668 externally managed ("error: The interpreter
+    at /usr is externally managed", exit 2). Switched .github/workflows/ci.yml
+    to `uv sync --frozen --all-extras` (test job) / `--extra dev`
+    (hardware, sim-report) into the project .venv, with `uv run` prefixes
+    for python/ruff/pytest/espbench so every step uses the synced venv, and
+    added an apt step for Qt runtime libs (libegl1, libgl1, libxkbcommon0,
+    libdbus-1-3, libfontconfig1) because the matrix installs the gui extra
+    and test_gui constructs a QApplication under QT_QPA_PLATFORM=offscreen.
+    `uv sync --frozen --all-extras --dry-run` verified locally (only the
+    editable reinstall); the `espbench init` template is untouched (tests
+    pin its `python -m pip`/`python -m pytest` lines). Workflow YAML parsed
+    with PyYAML. Tests: 330 (no code change).

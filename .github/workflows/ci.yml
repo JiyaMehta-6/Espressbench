@@ -17,18 +17,23 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Qt system libraries
+        run: >
+          sudo apt-get update -qq &&
+          sudo apt-get install -y -qq
+          libegl1 libgl1 libxkbcommon0 libdbus-1-3 libfontconfig1
       - name: Install
-        run: uv pip install --system -e ".[dev,gui]"
+        run: uv sync --frozen --all-extras
       - name: Firmware syntax check
-        run: python -m py_compile firmware/agent.py firmware/boot.py firmware/wifi.example.py
+        run: uv run python -m py_compile firmware/agent.py firmware/boot.py firmware/wifi.example.py
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
       - name: Lock check
         run: uv lock --check
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q --junitxml=pytest.xml
+        run: uv run pytest -q --junitxml=pytest.xml
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,14 +51,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --frozen --extra dev
       - name: Live suites (requires attached board)
         run: |
           if [ -z "${{ vars.ESP_HOST }}" ]; then
             echo "Set the ESP_HOST repository variable to run live suites."
             exit 1
           fi
-          espbench run --host "${{ vars.ESP_HOST }}" --out live-reports/
+          uv run espbench run --host "${{ vars.ESP_HOST }}" --out live-reports/
       - name: Upload live reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,15 +75,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --frozen --extra dev
       - name: Simulated run (report + insights land in the step summary)
-        run: espbench run --sim --out reports/
+        run: uv run espbench run --sim --out reports/
       - name: Insights
-        run: espbench insight reports/report.json
+        run: uv run espbench insight reports/report.json
       - name: Badge and histogram
         run: |
-          espbench badge reports/report.json --metric p95 --out reports/badge.svg
-          espbench chart reports/report.json --out reports/histogram.svg
+          uv run espbench badge reports/report.json --metric p95 --out reports/badge.svg
+          uv run espbench chart reports/report.json --out reports/histogram.svg
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
